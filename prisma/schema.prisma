@@ -1,0 +1,195 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+// Get a free hosted Postgres database in seconds: `npx create-db`
+
+generator client {
+  provider = "prisma-client-js"
+  output   = "../generated/prisma/client"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+model User {
+  id              String    @id
+  name            String
+  email           String
+  emailVerified   Boolean   @default(false)
+  image           String?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+  username        String?
+  displayUsername String?
+  onboarded       Boolean?  @default(false)
+  
+  // Custom SecureShare fields
+  orgId           String?
+  role            String?   @default("USER") // OWNER, ADMIN, USER
+  publicKey       String?   @db.Text
+  
+  // Key Sync (Zero-Knowledge)
+  encryptedPrivateKey String? @db.Text
+  privateKeySalt      String? // Salt for PBKDF2
+  privateKeyIV        String? // IV for AES-GCM
+
+  // Emergency Recovery (Encrypted with a high-entropy string)
+  recoveryEncryptedPrivateKey String? @db.Text
+  recoverySalt                String?
+  recoveryIV                  String?
+  
+  sessions        Session[]
+  accounts        Account[]
+  organization    Organization? @relation(fields: [orgId], references: [id])
+  
+  sentDocuments     Document[]    @relation("Sender")
+  receivedDocuments Document[]    @relation("Receiver")
+  
+  sentMessages      Message[]     @relation("SentMessages")
+  receivedMessages  Message[]     @relation("ReceivedMessages")
+  
+  auditLogs       AuditLog[]
+
+  @@unique([email])
+  @@unique([username])
+  @@map("user")
+}
+
+model Organization {
+  id        String   @id @default(cuid())
+  name      String   @unique
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Org-scoped Sync Keys
+  publicKey           String? @db.Text
+  encryptedPrivateKey String? @db.Text
+  privateKeySalt      String?
+  privateKeyIV        String?
+
+  users       User[]
+  messages    Message[]
+  documents   Document[]
+  invitations Invitation[]
+
+  @@map("organization")
+}
+
+model Invitation {
+  id         String   @id @default(cuid())
+  email      String
+  orgId      String
+  role       String   @default("USER") // ADMIN, USER
+  inviterId  String
+  status     String   @default("PENDING") // PENDING, ACCEPTED, REVOKED
+  expiresAt  DateTime
+  createdAt  DateTime @default(now())
+
+  organization Organization @relation(fields: [orgId], references: [id])
+
+  @@unique([email, orgId])
+  @@map("invitation")
+}
+
+model Message {
+  id         String   @id @default(cuid())
+  senderId   String
+  receiverId String
+  orgId      String
+  subject    String?
+  content    String?  @db.Text
+  createdAt  DateTime @default(now())
+
+  sender       User         @relation("SentMessages", fields: [senderId], references: [id])
+  receiver     User         @relation("ReceivedMessages", fields: [receiverId], references: [id])
+  organization Organization @relation(fields: [orgId], references: [id])
+  documents    Document[]
+
+  @@map("message")
+}
+
+model Document {
+  id               String   @id @default(cuid())
+  messageId        String?
+  senderId         String
+  receiverId       String
+  orgId            String?
+  fileUrl          String?
+  fileName         String?
+  fileSize         Int?
+  contentType      String?
+  encryptedAesKey  String   @db.Text
+  expiryDate       DateTime?
+  status           String   @default("Available") // Available, Viewed, Expired
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  message      Message?      @relation(fields: [messageId], references: [id])
+  sender       User          @relation("Sender", fields: [senderId], references: [id])
+  receiver     User          @relation("Receiver", fields: [receiverId], references: [id])
+  organization Organization? @relation(fields: [orgId], references: [id])
+
+  @@map("document")
+}
+
+model AuditLog {
+  id        String   @id @default(cuid())
+  userId    String
+  action    String   // Upload, View, Failed_Login
+  ipAddress String?
+  timestamp DateTime @default(now())
+
+  user      User     @relation(fields: [userId], references: [id])
+
+  @@map("audit_log")
+}
+
+
+model Session {
+  id        String   @id
+  expiresAt DateTime
+  token     String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  ipAddress String?
+  userAgent String?
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([token])
+  @@index([userId])
+  @@map("session")
+}
+
+model Account {
+  id                    String    @id
+  accountId             String
+  providerId            String
+  userId                String
+  user                  User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  accessToken           String?
+  refreshToken          String?
+  idToken               String?
+  accessTokenExpiresAt  DateTime?
+  refreshTokenExpiresAt DateTime?
+  scope                 String?
+  password              String?
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
+
+  @@index([userId])
+  @@map("account")
+}
+
+model Verification {
+  id         String   @id
+  identifier String
+  value      String
+  expiresAt  DateTime
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@index([identifier])
+  @@map("verification")
+}
