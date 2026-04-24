@@ -43,11 +43,11 @@ model User {
   accounts        Account[]
   organization    Organization? @relation(fields: [orgId], references: [id])
   
-  sentDocuments     Document[]    @relation("Sender")
-  receivedDocuments Document[]    @relation("Receiver")
+  sentDocuments     Document[]          @relation("Sender")
+  receivedDocuments DocumentRecipient[] @relation("ReceivedDocuments")
   
-  sentMessages      Message[]     @relation("SentMessages")
-  receivedMessages  Message[]     @relation("ReceivedMessages")
+  sentMessages      Message[]           @relation("SentMessages")
+  receivedMessages  MessageRecipient[]  @relation("ReceivedMessages")
   
   auditLogs       AuditLog[]
 
@@ -95,31 +95,42 @@ model Invitation {
 model Message {
   id         String   @id @default(cuid())
   senderId   String
-  receiverId String
-  orgId      String
+  orgId      String?
   subject    String?
   content    String?  @db.Text
   createdAt  DateTime @default(now())
 
-  sender       User         @relation("SentMessages", fields: [senderId], references: [id])
-  receiver     User         @relation("ReceivedMessages", fields: [receiverId], references: [id])
-  organization Organization @relation(fields: [orgId], references: [id])
+  sender       User               @relation("SentMessages", fields: [senderId], references: [id])
+  organization Organization?      @relation(fields: [orgId], references: [id])
   documents    Document[]
+  recipients   MessageRecipient[]
 
   @@map("message")
+}
+
+model MessageRecipient {
+  id              String   @id @default(cuid())
+  messageId       String
+  userId          String
+  encryptedAesKey String   @db.Text
+  role            String   @default("TO") // TO, CC
+  
+  message   Message  @relation(fields: [messageId], references: [id], onDelete: Cascade)
+  user      User     @relation("ReceivedMessages", fields: [userId], references: [id])
+
+  @@unique([messageId, userId])
+  @@map("message_recipient")
 }
 
 model Document {
   id               String   @id @default(cuid())
   messageId        String?
   senderId         String
-  receiverId       String
   orgId            String?
   fileUrl          String?
   fileName         String?
   fileSize         Int?
   contentType      String?
-  encryptedAesKey  String   @db.Text
   expiryDate       DateTime?
   status           String   @default("Available") // Available, Viewed, Expired
   createdAt        DateTime @default(now())
@@ -127,20 +138,36 @@ model Document {
 
   message      Message?      @relation(fields: [messageId], references: [id])
   sender       User          @relation("Sender", fields: [senderId], references: [id])
-  receiver     User          @relation("Receiver", fields: [receiverId], references: [id])
   organization Organization? @relation(fields: [orgId], references: [id])
+  recipients   DocumentRecipient[]
 
   @@map("document")
 }
 
-model AuditLog {
-  id        String   @id @default(cuid())
-  userId    String
-  action    String   // Upload, View, Failed_Login
-  ipAddress String?
-  timestamp DateTime @default(now())
+model DocumentRecipient {
+  id              String   @id @default(cuid())
+  documentId      String
+  userId          String
+  encryptedAesKey String   @db.Text
+  
+  document  Document @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  user      User     @relation("ReceivedDocuments", fields: [userId], references: [id])
 
-  user      User     @relation(fields: [userId], references: [id])
+  @@unique([documentId, userId])
+  @@map("document_recipient")
+}
+
+model AuditLog {
+  id              String   @id @default(cuid())
+  userId          String
+  actionType      String   // MESSAGE_SENT, DOC_SHARED, LOGIN, etc.
+  initiatorOrgId  String?
+  targetOrgId     String?
+  ipAddress       String?
+  metadata        Json?    // For flexible extra details
+  timestamp       DateTime @default(now())
+
+  user            User     @relation(fields: [userId], references: [id])
 
   @@map("audit_log")
 }

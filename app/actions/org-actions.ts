@@ -280,3 +280,24 @@ export async function getRecipientOrg(email: string) {
 
   return user?.organization || null;
 }
+
+/**
+ * Gets organizations for multiple emails.
+ */
+export async function getRecipientsOrgs(emails: string[]) {
+  const users = await prisma.user.findMany({
+    where: {
+      email: {
+        in: emails.map(e => e.toLowerCase()),
+      }
+    },
+    select: {
+      email: true,
+      organization: {
+        select: { name: true }
+      }
+    }
+  });
+
+  return users.map(u => ({ email: u.email, orgName: u.organization?.name }));
+}

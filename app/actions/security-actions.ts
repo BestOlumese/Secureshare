@@ -38,7 +38,7 @@ export async function resetMasterPassword(data: {
   await prisma.auditLog.create({
     data: {
       userId,
-      action: "Master_Password_Reset",
+      actionType: "MASTER_PASSWORD_RESET",
       ipAddress: (await headers()).get("x-forwarded-for") || "unknown",
     },
   });

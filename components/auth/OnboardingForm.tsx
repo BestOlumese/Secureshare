@@ -116,10 +116,13 @@ export default function OnboardingForm({
       if (result.success) {
         setStep(3); // Go to Recovery Key Step
         toast.success("Account secured!");
+      } else {
+        toast.error(result.error || "Security setup failed.");
+        setStep(1);
       }
-    } catch (err) {
+    } catch (err: any) {
       console.error(err);
-      toast.error("Security setup failed. Please try again.");
+      toast.error(err.message || "Security setup failed. Please try again.");
       setStep(1);
     } finally {
       setIsLoading(false);

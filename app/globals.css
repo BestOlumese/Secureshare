@@ -24,6 +24,9 @@
 }
 
 @layer base {
+  html {
+    scroll-behavior: smooth;
+  }
   * {
     @apply border-border;
   }
@@ -38,19 +41,34 @@
 }
 
 .glass-card {
-  @apply rounded-2xl shadow-2xl;
+  @apply rounded-[32px] border border-slate-800/60 bg-slate-900/40 backdrop-blur-xl transition-all duration-500 hover:border-sky-500/30 hover:bg-slate-900/60 shadow-2xl;
 }
 
 .gradient-text {
-  @apply bg-clip-text text-transparent bg-linear-to-br from-white to-slate-400;
+  @apply bg-clip-text text-transparent bg-linear-to-br from-white via-slate-200 to-slate-500;
 }
 
 .premium-button {
-  @apply relative overflow-hidden rounded-xl px-6 py-3 font-semibold transition-all hover:scale-105 active:scale-95;
-  background: linear-gradient(135deg, #0ea5e9 0%, #38bdf8 100%);
-  box-shadow: 0 0 20px rgba(14, 165, 233, 0.3);
+  @apply relative overflow-hidden rounded-2xl px-8 py-3.5 font-bold text-white transition-all hover:scale-[1.02] active:scale-[0.98] disabled:opacity-50;
+  background: linear-gradient(135deg, #0ea5e9 0%, #6366f1 100%);
+  box-shadow: 0 10px 30px -10px rgba(14, 165, 233, 0.5);
 }
 
 .premium-button:hover {
-  box-shadow: 0 0 30px rgba(56, 189, 248, 0.5);
+  box-shadow: 0 15px 40px -10px rgba(99, 102, 241, 0.6);
+}
+
+.custom-scrollbar::-webkit-scrollbar {
+  width: 5px;
+  height: 5px;
+}
+.custom-scrollbar::-webkit-scrollbar-track {
+  background: transparent;
+}
+.custom-scrollbar::-webkit-scrollbar-thumb {
+  background: #1e293b;
+  border-radius: 10px;
+}
+.custom-scrollbar::-webkit-scrollbar-thumb:hover {
+  background: #334155;
 }

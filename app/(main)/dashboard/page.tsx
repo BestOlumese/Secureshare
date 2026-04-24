@@ -6,10 +6,17 @@ export default async function DashboardPage() {
   const session = await protectPage();
 
   const receivedMessages = await prisma.message.findMany({
-    where: { receiverId: session.user.id },
+    where: { 
+      recipients: {
+        some: { userId: session.user.id }
+      },
+      senderId: { not: session.user.id } // Filter out sent messages from inbox
+    },
     include: { 
       sender: true,
-      receiver: true,
+      recipients: {
+        include: { user: true }
+      },
       documents: true 
     },
     orderBy: { createdAt: "desc" },
@@ -19,7 +26,9 @@ export default async function DashboardPage() {
     where: { senderId: session.user.id },
     include: { 
       sender: true,
-      receiver: true,
+      recipients: {
+        include: { user: true }
+      },
       documents: true 
     },
     orderBy: { createdAt: "desc" },

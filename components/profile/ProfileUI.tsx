@@ -29,7 +29,7 @@ export default function ProfileUI({ user, members, invitations }: ProfileUIProps
   const tabs = [
     { id: "overview", label: "Profile Overview", icon: User },
     { id: "security", label: "Security Vault", icon: Shield },
-    ...(isAdminOrOwner ? [{ id: "organization", label: "Organization", icon: Building2 }] : []),
+    ...(user.orgId ? [{ id: "organization", label: "Organization", icon: Building2 }] : []),
   ] as const;
 
   return (
@@ -163,7 +163,7 @@ export default function ProfileUI({ user, members, invitations }: ProfileUIProps
           </motion.div>
         )}
 
-        {activeTab === "organization" && isAdminOrOwner && (
+        {activeTab === "organization" && user.orgId && (
           <motion.div 
             initial={{ opacity: 0, y: 10 }}
             animate={{ opacity: 1, y: 0 }}

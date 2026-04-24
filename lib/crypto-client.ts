@@ -46,6 +46,34 @@ export async function encryptFile(
 }
 
 /**
+ * Encrypts a string using AES-GCM.
+ * Returns the IV and encrypted data combined as a base64 string.
+ */
+export async function encryptString(
+  text: string,
+  key: CryptoKey
+): Promise<string> {
+  const iv = window.crypto.getRandomValues(new Uint8Array(12));
+  const encoder = new TextEncoder();
+  const data = encoder.encode(text);
+
+  const encryptedData = await window.crypto.subtle.encrypt(
+    {
+      name: "AES-GCM",
+      iv,
+    },
+    key,
+    data
+  );
+
+  const combined = new Uint8Array(iv.length + encryptedData.byteLength);
+  combined.set(iv);
+  combined.set(new Uint8Array(encryptedData), iv.length);
+
+  return btoa(String.fromCharCode(...combined));
+}
+
+/**
  * Wraps (encrypts) the AES key using the receiver's RSA-OAEP Public Key.
  */
 export async function wrapAesKey(
@@ -100,6 +128,35 @@ export async function decryptData(
     aesKey,
     encryptedContent
   );
+}
+
+/**
+ * Decrypts a base64 encoded string using AES-GCM.
+ */
+export async function decryptString(
+  base64Data: string,
+  aesKey: CryptoKey
+): Promise<string> {
+  const binaryString = atob(base64Data);
+  const fullData = new Uint8Array(binaryString.length);
+  for (let i = 0; i < binaryString.length; i++) {
+    fullData[i] = binaryString.charCodeAt(i);
+  }
+
+  const iv = fullData.slice(0, 12);
+  const encryptedContent = fullData.slice(12);
+
+  const decryptedBuffer = await window.crypto.subtle.decrypt(
+    {
+      name: "AES-GCM",
+      iv,
+    },
+    aesKey,
+    encryptedContent
+  );
+
+  const decoder = new TextDecoder();
+  return decoder.decode(decryptedBuffer);
 }
 
 /**
