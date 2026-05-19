@@ -1,20 +1,21 @@
 "use client";
 
-import { useState, useRef } from "react";
-import { 
-  X, 
-  Send, 
-  Paperclip, 
-  ShieldCheck, 
-  Loader2, 
-  User, 
-  Mail, 
+import { useState, useRef, useEffect } from "react";
+import {
+  X,
+  Send,
+  Paperclip,
+  ShieldCheck,
+  Loader2,
+  User,
+  Mail,
   XCircle,
   FileText,
   Lock,
   Search,
   Plus,
-  Building2
+  Building2,
+  Clock,
 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { useForm } from "react-hook-form";
@@ -32,7 +33,7 @@ import {
   getSenderPublicKey, 
   sendSecureMessage 
 } from "@/app/actions/documents";
-import { searchOrganizations, getRecipientOrg } from "@/app/actions/org-actions";
+import { searchOrganizations, getRecipientOrg, getOrgPublicKey } from "@/app/actions/org-actions";
 import { useUploadThing } from "@/lib/uploadthing";
 import { cn } from "@/lib/utils";
 
@@ -47,12 +48,19 @@ interface ComposeModalProps {
   isOpen: boolean;
   onClose: () => void;
   user: any;
+  replyTo?: {
+    email: string;
+    org: { id: string; name: string } | null;
+    subject: string;
+  };
+  forwardSubject?: string;
 }
 
-export default function ComposeModal({ isOpen, onClose, user }: ComposeModalProps) {
+export default function ComposeModal({ isOpen, onClose, user, replyTo, forwardSubject }: ComposeModalProps) {
   const [files, setFiles] = useState<File[]>([]);
   const [isSending, setIsSending] = useState(false);
   const [progress, setProgress] = useState(0);
+  const [expiryDays, setExpiryDays] = useState(0);
   
   // Recipient States with DB Org Tracking
   const [toRecipient, setToRecipient] = useState<{ 
@@ -75,6 +83,17 @@ export default function ComposeModal({ isOpen, onClose, user }: ComposeModalProp
   
   const fileInputRef = useRef<HTMLInputElement>(null);
   const searchTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+
+  // Pre-fill when replying or forwarding
+  useEffect(() => {
+    if (!isOpen) return;
+    if (replyTo) {
+      setToRecipient({ email: replyTo.email, org: replyTo.org });
+      setValue("subject", replyTo.subject.startsWith("Re:") ? replyTo.subject : `Re: ${replyTo.subject}`);
+    } else if (forwardSubject) {
+      setValue("subject", forwardSubject.startsWith("Fwd:") ? forwardSubject : `Fwd: ${forwardSubject}`);
+    }
+  }, [replyTo, forwardSubject, isOpen]);
 
   const { startUpload } = useUploadThing("encryptedFileUploader");
 
@@ -138,7 +157,7 @@ export default function ComposeModal({ isOpen, onClose, user }: ComposeModalProp
         setToRecipient(prev => ({ 
           ...prev, 
           dbOrgName: org.name,
-          org: prev.org ? prev.org : { id: (org as any).id, name: org.name } // Auto-fill if not manually set
+          org: prev.org ? prev.org : { id: org.id, name: org.name },
         }));
       } else {
         setToRecipient(prev => ({ ...prev, dbOrgName: undefined }));
@@ -157,7 +176,7 @@ export default function ComposeModal({ isOpen, onClose, user }: ComposeModalProp
         const updatedCcs = [...ccRecipients];
         updatedCcs[index].dbOrgName = org.name;
         if (!updatedCcs[index].org) {
-          updatedCcs[index].org = { id: (org as any).id, name: org.name };
+          updatedCcs[index].org = { id: org.id, name: org.name };
         }
         setCcRecipients(updatedCcs);
       } else {
@@ -282,12 +301,32 @@ export default function ComposeModal({ isOpen, onClose, user }: ComposeModalProp
           att.documentKeyShares = keyShares.map(s => ({ userId: s.userId, encryptedAesKey: s.encryptedAesKey }));
         });
 
-        // 6. Send to API
+        // 6. Wrap AES key for each target organization (org-to-org encryption)
+        const involvedOrgIds = Array.from(new Set([
+          toRecipient.org?.id,
+          ...ccRecipients.map((r) => r.org?.id),
+        ].filter(Boolean))) as string[];
+
+        const orgKeyShares: { orgId: string; encryptedAesKey: string }[] = [];
+        for (const orgId of involvedOrgIds) {
+          const orgPublicKey = await getOrgPublicKey(orgId);
+          if (orgPublicKey) {
+            const wrapped = await wrapAesKey(aesKey, orgPublicKey);
+            orgKeyShares.push({ orgId, encryptedAesKey: wrapped });
+          }
+        }
+
+        // 7. Send to API
         setProgress(90);
+        const expiryDate = expiryDays > 0
+          ? new Date(Date.now() + expiryDays * 24 * 60 * 60 * 1000)
+          : undefined;
         await sendSecureMessage({
           subject: data.subject,
           content: encryptedContent,
+          expiryDate,
           messageKeyShares: keyShares,
+          orgKeyShares,
           attachments: attachmentMetadata,
         });
 
@@ -306,9 +345,9 @@ export default function ComposeModal({ isOpen, onClose, user }: ComposeModalProp
         reset();
         setToRecipient({ email: "", org: null });
         setCcRecipients([]);
+        setExpiryDays(0);
         onClose();
-        window.location.reload(); 
-        return msg;
+        return msg as string;
       },
       error: (err) => {
         setIsSending(false);
@@ -338,19 +377,21 @@ export default function ComposeModal({ isOpen, onClose, user }: ComposeModalProp
             initial={{ opacity: 0, scale: 0.95, y: 20 }}
             animate={{ opacity: 1, scale: 1, y: 0 }}
             exit={{ opacity: 0, scale: 0.95, y: 20 }}
-            className="relative w-full max-w-3xl overflow-hidden rounded-3xl border border-slate-800 bg-[#0f172a] shadow-2xl"
+            className="relative w-full max-w-3xl overflow-hidden rounded-2xl border border-gray-200 bg-white shadow-xl"
           >
             {/* Header */}
-            <div className="flex items-center justify-between border-b border-slate-800 bg-slate-900/50 px-6 py-4">
+            <div className="flex items-center justify-between border-b border-gray-100 bg-white px-6 py-4">
               <div className="flex items-center gap-3">
-                <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-sky-500/10 text-sky-400">
+                <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-blue-50 text-blue-600">
                   <Mail className="h-4 w-4" />
                 </div>
-                <h2 className="text-lg font-bold text-white">New Secure Message</h2>
+                <h2 className="text-lg font-bold text-gray-900">
+                  {replyTo ? "Reply" : forwardSubject ? "Forward" : "New Secure Message"}
+                </h2>
               </div>
-              <button 
+              <button
                 onClick={onClose}
-                className="rounded-full p-2 text-slate-500 hover:bg-slate-800 hover:text-white transition-colors"
+                className="rounded-lg p-1.5 text-gray-400 hover:bg-gray-100 hover:text-gray-700 transition-colors"
               >
                 <X className="h-5 w-5" />
               </button>
@@ -361,31 +402,31 @@ export default function ComposeModal({ isOpen, onClose, user }: ComposeModalProp
                 
                 {/* To Recipient */}
                 <div className="space-y-2">
-                  <div className="relative flex items-center gap-4 border-b border-slate-800 pb-2">
-                    <span className="text-sm font-bold text-slate-500 w-12 uppercase tracking-widest">To</span>
+                  <div className="relative flex items-center gap-4 border-b border-gray-100 pb-2">
+                    <span className="text-sm font-bold text-gray-400 w-12 uppercase tracking-widest">To</span>
                     <div className="relative flex-1">
-                      <User className="absolute left-0 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-600" />
+                      <User className="absolute left-0 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400" />
                       <input
                         value={toRecipient.email}
                         onChange={(e) => updateToEmail(e.target.value)}
                         placeholder="recipient@example.com"
-                        className="w-full bg-transparent py-2 pl-6 pr-4 text-sm text-white focus:outline-none placeholder:text-slate-700"
+                        className="w-full bg-transparent py-2 pl-6 pr-4 text-sm text-gray-900 focus:outline-none placeholder:text-gray-400"
                       />
                     </div>
                   </div>
-                  
+
                   <div className="relative ml-16 flex items-center gap-3">
                     <div className="flex items-center gap-2 flex-1 max-w-md">
-                      <Building2 className="h-3.5 w-3.5 text-slate-600" />
-                      <input 
+                      <Building2 className="h-3.5 w-3.5 text-gray-400" />
+                      <input
                         value={activeSearchTarget === "to" ? orgSearch : (toRecipient.org?.name || "")}
                         onChange={(e) => handleOrgSearch(e.target.value, "to")}
                         placeholder="Assign Organization..."
-                        className="bg-transparent text-[11px] font-black text-sky-400 focus:outline-none placeholder:text-slate-700 w-full uppercase tracking-widest"
+                        className="bg-transparent text-[11px] font-black text-blue-600 focus:outline-none placeholder:text-gray-400 w-full uppercase tracking-widest"
                       />
                     </div>
                     {toRecipient.dbOrgName && toRecipient.org && toRecipient.org.name !== toRecipient.dbOrgName && (
-                      <div className="flex items-center gap-1.5 px-2 py-1 rounded-md bg-red-500/10 text-red-400 border border-red-500/20 text-[9px] font-black uppercase animate-pulse">
+                      <div className="flex items-center gap-1.5 px-2 py-1 rounded-md bg-red-50 text-red-500 border border-red-200 text-[9px] font-black uppercase animate-pulse">
                         <XCircle className="h-3 w-3" />
                         Target Mismatch
                       </div>
@@ -397,12 +438,12 @@ export default function ComposeModal({ isOpen, onClose, user }: ComposeModalProp
                           initial={{ opacity: 0, y: -5 }}
                           animate={{ opacity: 1, y: 0 }}
                           exit={{ opacity: 0, y: -5 }}
-                          className="absolute left-0 right-0 top-full z-20 mt-1 max-h-32 overflow-y-auto rounded-xl border border-slate-800 bg-[#161e31] shadow-2xl custom-scrollbar"
+                          className="absolute left-0 right-0 top-full z-20 mt-1 max-h-32 overflow-y-auto rounded-xl border border-gray-200 bg-white shadow-lg custom-scrollbar"
                         >
                           {orgResults.map((org) => (
-                            <button key={org.id} type="button" onClick={() => selectOrg(org)} className="flex w-full items-center justify-between px-3 py-2 text-left text-xs hover:bg-slate-800">
-                              <span className="font-bold text-slate-300">{org.name}</span>
-                              <Plus className="h-3 w-3 text-sky-500" />
+                            <button key={org.id} type="button" onClick={() => selectOrg(org)} className="flex w-full items-center justify-between px-3 py-2 text-left text-xs hover:bg-gray-50">
+                              <span className="font-bold text-gray-800">{org.name}</span>
+                              <Plus className="h-3 w-3 text-blue-500" />
                             </button>
                           ))}
                         </motion.div>
@@ -414,39 +455,39 @@ export default function ComposeModal({ isOpen, onClose, user }: ComposeModalProp
                 {/* CC Recipients */}
                 <div className="space-y-4">
                   <div className="flex items-center justify-between">
-                    <span className="text-sm font-bold text-slate-500 w-12 uppercase tracking-widest">CC</span>
-                    <button type="button" onClick={addCc} className="flex items-center gap-1 text-[10px] font-black text-sky-500 uppercase tracking-widest hover:text-sky-400 transition-colors">
+                    <span className="text-sm font-bold text-gray-400 w-12 uppercase tracking-widest">CC</span>
+                    <button type="button" onClick={addCc} className="flex items-center gap-1 text-[10px] font-black text-blue-600 uppercase tracking-widest hover:text-blue-500 transition-colors">
                       <Plus className="h-3 w-3" />
                       Add CC
                     </button>
                   </div>
-                  
+
                   {ccRecipients.map((cc, idx) => (
-                    <div key={idx} className="space-y-2 pl-4 border-l-2 border-slate-800">
+                    <div key={idx} className="space-y-2 pl-4 border-l-2 border-gray-200">
                       <div className="flex items-center gap-3">
                         <input
                           value={cc.email}
                           onChange={(e) => updateCcEmail(idx, e.target.value)}
                           placeholder="cc@example.com"
-                          className="flex-1 bg-transparent py-1 text-sm text-white focus:outline-none placeholder:text-slate-800 border-b border-slate-800/40"
+                          className="flex-1 bg-transparent py-1 text-sm text-gray-900 focus:outline-none placeholder:text-gray-400 border-b border-gray-100"
                         />
-                        <button type="button" onClick={() => removeCc(idx)} className="text-slate-600 hover:text-red-400">
+                        <button type="button" onClick={() => removeCc(idx)} className="text-gray-400 hover:text-red-400">
                           <X className="h-4 w-4" />
                         </button>
                       </div>
-                      
+
                       <div className="relative flex items-center gap-3">
                         <div className="flex items-center gap-2 flex-1">
-                          <Building2 className="h-3 w-3 text-slate-700" />
-                          <input 
+                          <Building2 className="h-3 w-3 text-gray-400" />
+                          <input
                             value={activeSearchTarget === idx ? orgSearch : (cc.org?.name || "")}
                             onChange={(e) => handleOrgSearch(e.target.value, idx)}
                             placeholder="Assign Organization..."
-                            className="bg-transparent text-[10px] font-black text-slate-500 focus:outline-none placeholder:text-slate-800 w-full uppercase tracking-widest"
+                            className="bg-transparent text-[10px] font-black text-gray-500 focus:outline-none placeholder:text-gray-400 w-full uppercase tracking-widest"
                           />
                         </div>
                         {cc.dbOrgName && cc.org && cc.org.name !== cc.dbOrgName && (
-                          <div className="flex items-center gap-1 px-2 py-0.5 rounded-md bg-red-500/10 text-red-400 border border-red-500/20 text-[8px] font-black uppercase">
+                          <div className="flex items-center gap-1 px-2 py-0.5 rounded-md bg-red-50 text-red-500 border border-red-200 text-[8px] font-black uppercase">
                             Mismatch
                           </div>
                         )}
@@ -457,12 +498,12 @@ export default function ComposeModal({ isOpen, onClose, user }: ComposeModalProp
                               initial={{ opacity: 0, y: -5 }}
                               animate={{ opacity: 1, y: 0 }}
                               exit={{ opacity: 0, y: -5 }}
-                              className="absolute left-0 right-0 top-full z-20 mt-1 max-h-32 overflow-y-auto rounded-xl border border-slate-800 bg-[#161e31] shadow-2xl custom-scrollbar"
+                              className="absolute left-0 right-0 top-full z-20 mt-1 max-h-32 overflow-y-auto rounded-xl border border-gray-200 bg-white shadow-lg custom-scrollbar"
                             >
                               {orgResults.map((org) => (
-                                <button key={org.id} type="button" onClick={() => selectOrg(org)} className="flex w-full items-center justify-between px-3 py-2 text-left text-xs hover:bg-slate-800">
-                                  <span className="font-bold text-slate-300">{org.name}</span>
-                                  <Plus className="h-3 w-3 text-sky-500" />
+                                <button key={org.id} type="button" onClick={() => selectOrg(org)} className="flex w-full items-center justify-between px-3 py-2 text-left text-xs hover:bg-gray-50">
+                                  <span className="font-bold text-gray-800">{org.name}</span>
+                                  <Plus className="h-3 w-3 text-blue-500" />
                                 </button>
                               ))}
                             </motion.div>
@@ -474,54 +515,52 @@ export default function ComposeModal({ isOpen, onClose, user }: ComposeModalProp
                 </div>
 
                 <div className="space-y-4 pt-2">
-                  <div className="flex items-center gap-4 border-b border-slate-800 pb-2">
-                    <span className="text-sm font-bold text-slate-500 w-12 uppercase tracking-widest">About</span>
-                    <input 
+                  <div className="flex items-center gap-4 border-b border-gray-100 pb-2">
+                    <span className="text-sm font-bold text-gray-400 w-12 uppercase tracking-widest">About</span>
+                    <input
                       {...register("subject")}
                       placeholder="Subject line..."
-                      className="flex-1 bg-transparent text-white focus:outline-none text-sm font-bold"
+                      className="flex-1 bg-transparent text-gray-900 focus:outline-none text-sm font-bold placeholder:text-gray-400"
                     />
                   </div>
 
-                  <textarea 
+                  <textarea
                     {...register("content")}
                     placeholder="Write your encrypted message here..."
-                    className="w-full min-h-[120px] bg-transparent text-slate-300 focus:outline-none text-base resize-none leading-relaxed"
+                    className="w-full min-h-[120px] bg-transparent text-gray-700 focus:outline-none text-base resize-none leading-relaxed placeholder:text-gray-400"
                   />
                 </div>
 
-                {/* Secure Routing Summary - Informative & Premium */}
+                {/* Secure Routing Summary */}
                 {involvedOrgs.length > 0 && (
-                  <div className="relative overflow-hidden rounded-2xl bg-gradient-to-br from-sky-500/10 to-transparent border border-sky-500/20 p-5">
-                    <div className="absolute top-0 right-0 -mr-4 -mt-4 h-24 w-24 rounded-full bg-sky-500/5 blur-3xl" />
-                    
+                  <div className="rounded-xl bg-blue-50 border border-blue-100 p-5">
                     <div className="flex items-start gap-4">
-                      <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-sky-500/20 text-sky-400 ring-1 ring-sky-500/40">
+                      <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-blue-100 text-blue-600 ring-1 ring-blue-200">
                         <ShieldCheck className="h-5 w-5" />
                       </div>
                       <div className="space-y-1">
-                        <h4 className="text-xs font-black uppercase tracking-[0.2em] text-sky-400">Zero-Knowledge Routing Active</h4>
-                        <p className="text-[11px] leading-relaxed text-slate-400">
-                          Your message and attachments are being cross-encrypted using <b>AES-256-GCM</b>. 
-                          Only participants within the authorized organizational containers listed below can decrypt this payload.
+                        <h4 className="text-xs font-black uppercase tracking-[0.2em] text-blue-700">Zero-Knowledge Routing Active</h4>
+                        <p className="text-[11px] leading-relaxed text-gray-600">
+                          Your message and attachments are cross-encrypted using <b>AES-256-GCM</b>.
+                          Only participants within the authorized organizations below can decrypt this payload.
                         </p>
                       </div>
                     </div>
 
                     <div className="mt-4 flex flex-wrap gap-2">
                       {involvedOrgs.map((name, i) => (
-                        <div 
-                          key={i} 
-                          className="group relative flex items-center gap-2 rounded-lg border border-slate-700 bg-slate-900/50 px-3 py-2 transition-all hover:border-sky-500/40 hover:bg-slate-800"
+                        <div
+                          key={i}
+                          className="group flex items-center gap-2 rounded-lg border border-gray-200 bg-white px-3 py-2 transition-all hover:border-blue-200 hover:bg-blue-50"
                         >
-                          <div className="h-1.5 w-1.5 rounded-full bg-sky-500 shadow-[0_0_8px_rgba(14,165,233,0.8)]" />
-                          <span className="text-[10px] font-black uppercase tracking-widest text-slate-200">{name}</span>
-                          <Building2 className="h-3 w-3 text-slate-600 group-hover:text-sky-400 transition-colors" />
+                          <div className="h-1.5 w-1.5 rounded-full bg-blue-500" />
+                          <span className="text-[10px] font-black uppercase tracking-widest text-gray-700">{name}</span>
+                          <Building2 className="h-3 w-3 text-gray-400 group-hover:text-blue-500 transition-colors" />
                         </div>
                       ))}
                     </div>
 
-                    <div className="mt-4 flex items-center gap-2 border-t border-sky-500/10 pt-3 text-[9px] font-bold uppercase tracking-widest text-sky-500/60">
+                    <div className="mt-4 flex items-center gap-2 border-t border-blue-100 pt-3 text-[9px] font-bold uppercase tracking-widest text-blue-500">
                       <Lock className="h-3 w-3" />
                       End-to-End Encrypted Tunnel Established
                     </div>
@@ -530,15 +569,15 @@ export default function ComposeModal({ isOpen, onClose, user }: ComposeModalProp
 
                 {/* File Previews */}
                 {files.length > 0 && (
-                  <div className="flex flex-wrap gap-2 mt-4 pt-4 border-t border-slate-800/40">
+                  <div className="flex flex-wrap gap-2 mt-4 pt-4 border-t border-gray-100">
                     {files.map((file, i) => (
-                      <div key={i} className="flex items-center gap-2 rounded-xl bg-slate-900 border border-slate-800 px-3 py-2 text-xs text-slate-300">
-                        <FileText className="h-3 w-3 text-sky-400" />
+                      <div key={i} className="flex items-center gap-2 rounded-xl bg-gray-50 border border-gray-200 px-3 py-2 text-xs text-gray-700">
+                        <FileText className="h-3 w-3 text-blue-500" />
                         <span className="max-w-[120px] truncate">{file.name}</span>
-                        <button 
+                        <button
                           type="button"
                           onClick={() => removeFile(i)}
-                          className="ml-1 text-slate-600 hover:text-red-400 transition-colors"
+                          className="ml-1 text-gray-400 hover:text-red-400 transition-colors"
                         >
                           <XCircle className="h-4 w-4" />
                         </button>
@@ -549,20 +588,36 @@ export default function ComposeModal({ isOpen, onClose, user }: ComposeModalProp
               </div>
 
               {/* Action Bar */}
-              <div className="border-t border-slate-800 bg-slate-900/50 px-6 py-4 flex items-center justify-between">
-                <div className="flex items-center gap-4">
+              <div className="border-t border-gray-100 bg-gray-50 px-6 py-4 flex items-center justify-between gap-3 flex-wrap">
+                <div className="flex items-center gap-3 flex-wrap">
                   <button
                     type="button"
                     onClick={() => fileInputRef.current?.click()}
-                    className="flex items-center gap-2 rounded-xl border border-slate-800 bg-slate-800/30 px-5 py-2.5 text-xs font-bold text-slate-400 hover:bg-slate-800 hover:text-white transition-all"
+                    className="flex items-center gap-2 rounded-xl border border-gray-200 bg-white px-4 py-2 text-xs font-bold text-gray-500 hover:bg-gray-100 hover:text-gray-700 transition-all"
                   >
                     <Paperclip className="h-4 w-4" />
                     Attach
                   </button>
                   <input type="file" multiple ref={fileInputRef} onChange={onFileChange} className="hidden" />
-                  
+
+                  {/* Expiry selector */}
+                  <div className="flex items-center gap-1.5 rounded-xl border border-gray-200 bg-white px-3 py-2 text-xs font-bold text-gray-500">
+                    <Clock className="h-3.5 w-3.5 text-gray-400 shrink-0" />
+                    <select
+                      value={expiryDays}
+                      onChange={(e) => setExpiryDays(Number(e.target.value))}
+                      className="bg-transparent focus:outline-none text-xs font-bold text-gray-600"
+                    >
+                      <option value={0}>No expiry</option>
+                      <option value={1}>Expires in 1 day</option>
+                      <option value={7}>Expires in 7 days</option>
+                      <option value={30}>Expires in 30 days</option>
+                      <option value={90}>Expires in 90 days</option>
+                    </select>
+                  </div>
+
                   {files.length > 0 && (
-                    <div className="text-[10px] font-black text-sky-500 uppercase tracking-widest bg-sky-500/10 px-3 py-1.5 rounded-full border border-sky-500/20">
+                    <div className="text-[10px] font-black text-blue-600 uppercase tracking-widest bg-blue-50 px-3 py-1.5 rounded-full border border-blue-100">
                       {files.length} Files Ready
                     </div>
                   )}
@@ -571,7 +626,7 @@ export default function ComposeModal({ isOpen, onClose, user }: ComposeModalProp
                 <button
                   type="submit"
                   disabled={isSending}
-                  className="flex items-center gap-2 rounded-xl bg-sky-500 px-8 py-2.5 text-sm font-black text-white hover:bg-sky-400 transition-all shadow-lg shadow-sky-500/20 disabled:opacity-50 active:scale-95"
+                  className="flex items-center gap-2 rounded-xl bg-blue-600 px-8 py-2.5 text-sm font-bold text-white hover:bg-blue-700 transition-all shadow-sm disabled:opacity-50"
                 >
                   {isSending ? (
                     <><Loader2 className="h-4 w-4 animate-spin" /> {progress}%</>

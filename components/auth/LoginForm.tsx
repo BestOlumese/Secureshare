@@ -7,7 +7,7 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import * as z from "zod";
 import { authClient } from "@/lib/auth-client";
 import { toast } from "sonner";
-import { Mail, ShieldCheck, Loader2, ArrowRight } from "lucide-react";
+import { Mail, ShieldCheck, Loader2, ArrowRight, ArrowLeft } from "lucide-react";
 
 const emailSchema = z.object({
   email: z.string().email("Invalid email address"),
@@ -32,26 +32,19 @@ export default function LoginForm() {
   });
 
   const otpInputs = useRef<(HTMLInputElement | null)[]>([]);
-  const otpValues = useState<string[]>(new Array(6).fill(""));
-  const [otpArray, setOtpArray] = otpValues;
+  const [otpArray, setOtpArray] = useState<string[]>(new Array(6).fill(""));
 
-  // Sync otpArray with react-hook-form
   useEffect(() => {
     otpForm.setValue("code", otpArray.join(""));
   }, [otpArray, otpForm]);
 
   const handleOtpChange = (index: number, value: string) => {
-    if (value.length > 1) value = value.slice(-1); // Only take last char if multiple
-    if (!/^\d*$/.test(value)) return; // Only digits
-
+    if (value.length > 1) value = value.slice(-1);
+    if (!/^\d*$/.test(value)) return;
     const newOtpArray = [...otpArray];
     newOtpArray[index] = value;
     setOtpArray(newOtpArray);
-
-    // Move to next input if value is entered
-    if (value && index < 5) {
-      otpInputs.current[index + 1]?.focus();
-    }
+    if (value && index < 5) otpInputs.current[index + 1]?.focus();
   };
 
   const handleKeyDown = (index: number, e: React.KeyboardEvent<HTMLInputElement>) => {
@@ -63,13 +56,10 @@ export default function LoginForm() {
   const handlePaste = (e: React.ClipboardEvent) => {
     e.preventDefault();
     const pastedData = e.clipboardData.getData("text").slice(0, 6).split("");
-    if (pastedData.every(char => /^\d$/.test(char))) {
+    if (pastedData.every((char) => /^\d$/.test(char))) {
       const newOtpArray = [...otpArray];
-      pastedData.forEach((char, i) => {
-        if (i < 6) newOtpArray[i] = char;
-      });
+      pastedData.forEach((char, i) => { if (i < 6) newOtpArray[i] = char; });
       setOtpArray(newOtpArray);
-      // Focus last filled input or the 6th one
       const focusIndex = Math.min(pastedData.length, 5);
       otpInputs.current[focusIndex]?.focus();
     }
@@ -82,15 +72,14 @@ export default function LoginForm() {
         email: data.email,
         type: "sign-in",
       });
-
       if (error) {
         toast.error(error.message || "Failed to send OTP");
       } else {
         setEmail(data.email);
         setStep("otp");
-        toast.success("Verification code sent to your email!");
+        toast.success("Verification code sent!");
       }
-    } catch (err) {
+    } catch {
       toast.error("Something went wrong. Please try again.");
     } finally {
       setIsLoading(false);
@@ -99,20 +88,18 @@ export default function LoginForm() {
 
   async function onOtpSubmit(data: z.infer<typeof otpSchema>) {
     setIsLoading(true);
-    console.log("Verifying code for:", email, "with code:", data.code);
     try {
       const { error } = await authClient.signIn.emailOtp({
         email,
-        otp: data.code, // Client expects 'otp' but I'll try both or just ensure it's not undefined
+        otp: data.code,
       });
-
       if (error) {
         toast.error(error.message || "Invalid or expired code");
       } else {
-        toast.success("Welcome back to SecureShare!");
-        window.location.href = "/onboarding"; // Redirect to onboarding check
+        toast.success("Welcome to SecureShare!");
+        window.location.href = "/onboarding";
       }
-    } catch (err) {
+    } catch {
       toast.error("Authentication failed. Please try again.");
     } finally {
       setIsLoading(false);
@@ -120,125 +107,113 @@ export default function LoginForm() {
   }
 
   return (
-    <div className="w-full max-w-md">
+    <div className="w-full max-w-sm">
       <AnimatePresence mode="wait">
         {step === "email" ? (
           <motion.div
             key="email"
-            initial={{ opacity: 0, x: -20 }}
+            initial={{ opacity: 0, x: -16 }}
             animate={{ opacity: 1, x: 0 }}
-            exit={{ opacity: 0, x: 20 }}
-            className="glass-card p-8"
+            exit={{ opacity: 0, x: 16 }}
           >
-            <div className="mb-8 text-center">
-              <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-xl bg-sky-500/10 text-sky-400">
-                <ShieldCheck className="h-6 w-6" />
+            <div className="mb-8">
+              <div className="mb-4 flex h-11 w-11 items-center justify-center rounded-xl bg-blue-50 text-blue-600">
+                <ShieldCheck className="h-5 w-5" />
               </div>
-              <h1 className="text-2xl font-bold text-white">Welcome Back</h1>
-              <p className="text-slate-400">
-                Enter your email to receive a secure login code.
-              </p>
+              <h1 className="text-2xl font-bold text-gray-900 mb-1">Sign in</h1>
+              <p className="text-sm text-gray-500">Enter your email to receive a secure login code.</p>
             </div>
 
-            <form
-              onSubmit={emailForm.handleSubmit(onEmailSubmit)}
-              className="space-y-4"
-            >
-              <div className="relative">
-                <Mail className="absolute left-3 top-1/2 h-5 w-5 -translate-y-1/2 text-slate-500" />
-                <input
-                  {...emailForm.register("email")}
-                  placeholder="name@example.com"
-                  className="w-full rounded-xl border border-slate-800 bg-slate-900/50 py-3 pl-10 pr-4 text-white placeholder:text-slate-600 focus:border-sky-500 focus:outline-none focus:ring-1 focus:ring-sky-500"
-                />
+            <form onSubmit={emailForm.handleSubmit(onEmailSubmit)} className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1.5">Email address</label>
+                <div className="relative">
+                  <Mail className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400" />
+                  <input
+                    {...emailForm.register("email")}
+                    type="email"
+                    placeholder="name@company.com"
+                    autoFocus
+                    className="w-full rounded-xl border border-gray-200 bg-white py-3 pl-10 pr-4 text-gray-900 placeholder:text-gray-400 focus:border-blue-400 focus:outline-none focus:ring-2 focus:ring-blue-500/10 transition-all"
+                  />
+                </div>
                 {emailForm.formState.errors.email && (
-                  <p className="mt-1 text-sm text-red-400">
-                    {emailForm.formState.errors.email.message}
-                  </p>
+                  <p className="mt-1.5 text-xs text-red-500">{emailForm.formState.errors.email.message}</p>
                 )}
               </div>
 
               <button
                 type="submit"
                 disabled={isLoading}
-                className="premium-button flex w-full items-center justify-center gap-2"
+                className="w-full flex items-center justify-center gap-2 rounded-xl bg-blue-600 px-6 py-3 text-sm font-bold text-white hover:bg-blue-700 transition-colors disabled:opacity-60 group"
               >
                 {isLoading ? (
-                  <Loader2 className="h-5 w-5 animate-spin" />
+                  <Loader2 className="h-4 w-4 animate-spin" />
                 ) : (
-                  "Send Login Code"
+                  <>
+                    Send login code
+                    <ArrowRight className="h-4 w-4 transition-transform group-hover:translate-x-1" />
+                  </>
                 )}
-                {!isLoading && <ArrowRight className="h-4 w-4" />}
               </button>
             </form>
           </motion.div>
         ) : (
           <motion.div
             key="otp"
-            initial={{ opacity: 0, x: 20 }}
+            initial={{ opacity: 0, x: 16 }}
             animate={{ opacity: 1, x: 0 }}
-            exit={{ opacity: 0, x: -20 }}
-            className="glass-card p-8"
+            exit={{ opacity: 0, x: -16 }}
           >
-            <div className="mb-8 text-center">
-              <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-xl bg-sky-500/10 text-sky-400">
-                <Mail className="h-6 w-6" />
+            <div className="mb-8">
+              <div className="mb-4 flex h-11 w-11 items-center justify-center rounded-xl bg-blue-50 text-blue-600">
+                <Mail className="h-5 w-5" />
               </div>
-              <h1 className="text-2xl font-bold text-white">
-                Check Your Email
-              </h1>
-              <p className="text-slate-400">
-                We've sent a 6-digit code to {email}
+              <h1 className="text-2xl font-bold text-gray-900 mb-1">Check your email</h1>
+              <p className="text-sm text-gray-500">
+                We sent a 6-digit code to <span className="font-semibold text-gray-700">{email}</span>
               </p>
             </div>
 
-            <form
-              onSubmit={otpForm.handleSubmit(onOtpSubmit)}
-              className="space-y-6"
-            >
-              <div className="flex justify-between gap-2">
-                {otpArray.map((digit, index) => (
-                  <input
-                    key={index}
-                    ref={(el) => {
-                      otpInputs.current[index] = el;
-                    }}
-                    type="text"
-                    inputMode="numeric"
-                    maxLength={1}
-                    value={digit}
-                    onChange={(e) => handleOtpChange(index, e.target.value)}
-                    onKeyDown={(e) => handleKeyDown(index, e)}
-                    onPaste={handlePaste}
-                    className="h-14 w-full rounded-xl border border-slate-800 bg-slate-900/50 text-center text-2xl font-bold text-white transition-all focus:border-sky-500 focus:outline-none focus:ring-1 focus:ring-sky-500"
-                  />
-                ))}
+            <form onSubmit={otpForm.handleSubmit(onOtpSubmit)} className="space-y-6">
+              <div>
+                <div className="flex justify-between gap-2">
+                  {otpArray.map((digit, index) => (
+                    <input
+                      key={index}
+                      ref={(el) => { otpInputs.current[index] = el; }}
+                      type="text"
+                      inputMode="numeric"
+                      maxLength={1}
+                      value={digit}
+                      onChange={(e) => handleOtpChange(index, e.target.value)}
+                      onKeyDown={(e) => handleKeyDown(index, e)}
+                      onPaste={handlePaste}
+                      className="h-12 w-full rounded-xl border border-gray-200 bg-white text-center text-xl font-bold text-gray-900 transition-all focus:border-blue-400 focus:outline-none focus:ring-2 focus:ring-blue-500/10"
+                    />
+                  ))}
+                </div>
+                <input type="hidden" {...otpForm.register("code")} />
+                {otpForm.formState.errors.code && (
+                  <p className="mt-2 text-center text-xs text-red-500">{otpForm.formState.errors.code.message}</p>
+                )}
               </div>
-              <input type="hidden" {...otpForm.register("code")} />
-              {otpForm.formState.errors.code && (
-                <p className="text-center text-sm text-red-400">
-                  {otpForm.formState.errors.code.message}
-                </p>
-              )}
 
               <button
                 type="submit"
-                disabled={isLoading}
-                className="premium-button flex w-full items-center justify-center gap-2"
+                disabled={isLoading || otpArray.some((d) => !d)}
+                className="w-full flex items-center justify-center gap-2 rounded-xl bg-blue-600 px-6 py-3 text-sm font-bold text-white hover:bg-blue-700 transition-colors disabled:opacity-60"
               >
-                {isLoading ? (
-                  <Loader2 className="h-5 w-5 animate-spin" />
-                ) : (
-                  "Verify & Sign In"
-                )}
+                {isLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : "Verify & sign in"}
               </button>
 
               <button
                 type="button"
                 onClick={() => setStep("email")}
-                className="w-full text-sm font-medium text-slate-500 transition-colors hover:text-sky-400"
+                className="w-full flex items-center justify-center gap-2 text-sm font-medium text-gray-400 hover:text-gray-700 transition-colors"
               >
-                Use a different email address
+                <ArrowLeft className="h-4 w-4" />
+                Use a different email
               </button>
             </form>
           </motion.div>

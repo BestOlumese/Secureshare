@@ -29,7 +29,7 @@ export default function LogoutButton() {
     <button
       onClick={handleLogout}
       disabled={isLoading}
-      className="flex w-full items-center justify-center gap-2 rounded-xl bg-red-500/5 py-4 text-sm font-black text-red-500 hover:bg-red-500 hover:text-white transition-all border border-red-500/10 hover:border-red-500 shadow-lg shadow-red-500/0 hover:shadow-red-500/10 uppercase tracking-widest"
+      className="flex w-full items-center justify-center gap-2 rounded-xl border border-red-100 bg-red-50 py-3 text-sm font-semibold text-red-500 hover:bg-red-500 hover:text-white hover:border-red-500 transition-all"
     >
       {isLoading ? (
         <Loader2 className="h-5 w-5 animate-spin" />

@@ -1,110 +1,89 @@
 "use client";
 
 import { motion } from "framer-motion";
-import { 
-  ShieldCheck, 
-  Share2, 
-  Eye, 
-  History, 
-  Cpu, 
-  Fingerprint,
-  Zap,
-  Lock
-} from "lucide-react";
+import { ShieldCheck, Share2, History, Key, Cpu, RefreshCw } from "lucide-react";
 
 const features = [
   {
     icon: ShieldCheck,
     title: "Zero-Knowledge Storage",
-    description: "We don't hold your keys. Your data is encrypted locally before it ever reaches the cloud.",
-    color: "bg-sky-500"
+    description: "We never hold your keys. Your data is encrypted locally before it ever reaches our servers.",
   },
   {
     icon: Share2,
     title: "Cross-Org Collaboration",
     description: "Securely bridge communication between different organizations without compromising security.",
-    color: "bg-indigo-500"
   },
   {
     icon: History,
     title: "Immutable Audit Logs",
-    description: "Track every interaction across organizations with enterprise-grade transparency and accountability.",
-    color: "bg-emerald-500"
+    description: "Track every interaction across organizations with enterprise-grade transparency.",
   },
   {
-    icon: Fingerprint,
-    title: "MFA Authentication",
-    description: "Biometric and hardware key support ensures only authorized personnel can access the vault.",
-    color: "bg-amber-500"
+    icon: Key,
+    title: "Per-Recipient Key Wrapping",
+    description: "Each recipient gets their own encrypted copy of the AES key — no shared secrets.",
   },
   {
     icon: Cpu,
     title: "Client-Side Cryptography",
-    description: "Advanced RSA and AES-256 encryption engines running directly in your browser.",
-    color: "bg-rose-500"
+    description: "RSA-2048 and AES-256-GCM encryption runs directly in your browser. Nothing leaves unencrypted.",
   },
   {
-    icon: Zap,
-    title: "Instant Secure Sync",
-    description: "Sync your encrypted vault across all devices securely using your master password.",
-    color: "bg-violet-500"
-  }
+    icon: RefreshCw,
+    title: "Cross-Device Recovery",
+    description: "Sync your vault across devices securely using your master password or emergency recovery key.",
+  },
 ];
 
 export default function Features() {
   return (
-    <section id="features" className="relative py-32 px-6 bg-[#020617]">
-      <div className="max-w-7xl mx-auto">
-        <div className="text-center mb-24">
-          <motion.div
-            initial={{ opacity: 0, y: 20 }}
+    <section id="features" className="py-24 px-6 bg-white">
+      <div className="max-w-6xl mx-auto">
+        <div className="text-center mb-16">
+          <motion.p
+            initial={{ opacity: 0, y: 12 }}
             whileInView={{ opacity: 1, y: 0 }}
             viewport={{ once: true }}
-            className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-sky-500/10 text-sky-400 text-[10px] font-black uppercase tracking-widest border border-sky-500/20 mb-6"
+            className="text-xs font-bold text-blue-600 uppercase tracking-widest mb-3"
           >
-            <Lock className="h-3 w-3" />
-            Enterprise Security
-          </motion.div>
+            Features
+          </motion.p>
           <motion.h2
-            initial={{ opacity: 0, y: 20 }}
+            initial={{ opacity: 0, y: 12 }}
             whileInView={{ opacity: 1, y: 0 }}
             viewport={{ once: true }}
-            transition={{ delay: 0.1 }}
-            className="text-4xl sm:text-5xl font-black text-white tracking-tight mb-6"
+            transition={{ delay: 0.08 }}
+            className="text-3xl sm:text-4xl font-black text-gray-900 tracking-tight mb-4"
           >
-            Engineered for <span className="text-sky-500">Total Privacy</span>
+            Built for security, designed for teams
           </motion.h2>
           <motion.p
-            initial={{ opacity: 0, y: 20 }}
+            initial={{ opacity: 0, y: 12 }}
             whileInView={{ opacity: 1, y: 0 }}
             viewport={{ once: true }}
-            transition={{ delay: 0.2 }}
-            className="max-w-2xl mx-auto text-slate-400 text-lg font-medium"
+            transition={{ delay: 0.12 }}
+            className="max-w-xl mx-auto text-gray-500"
           >
-            SecureShare combines the ease of modern messaging with the security 
-            of a private vault. Every feature is built with privacy at its core.
+            Every feature is engineered with privacy as the foundation, not an afterthought.
           </motion.p>
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
           {features.map((feature, i) => (
             <motion.div
               key={i}
-              initial={{ opacity: 0, y: 20 }}
+              initial={{ opacity: 0, y: 16 }}
               whileInView={{ opacity: 1, y: 0 }}
               viewport={{ once: true }}
-              transition={{ delay: i * 0.1 }}
-              className="group p-8 rounded-[32px] bg-slate-900/40 border border-slate-800/60 hover:border-sky-500/50 hover:bg-slate-900/60 transition-all duration-500"
+              transition={{ delay: i * 0.07 }}
+              className="group p-6 rounded-2xl border border-gray-200 bg-white hover:border-blue-200 hover:shadow-md transition-all duration-300"
             >
-              <div className={`mb-8 inline-flex h-14 w-14 items-center justify-center rounded-2xl ${feature.color} text-white shadow-lg shadow-${feature.color.split('-')[1]}-500/20 group-hover:scale-110 transition-transform duration-500`}>
-                <feature.icon className="h-7 w-7" />
+              <div className="mb-4 inline-flex h-11 w-11 items-center justify-center rounded-xl bg-blue-50 text-blue-600 group-hover:bg-blue-600 group-hover:text-white transition-all duration-300">
+                <feature.icon className="h-5 w-5" />
               </div>
-              <h3 className="text-2xl font-bold text-white mb-4 tracking-tight group-hover:text-sky-400 transition-colors">
-                {feature.title}
-              </h3>
-              <p className="text-slate-500 font-medium leading-relaxed">
-                {feature.description}
-              </p>
+              <h3 className="text-base font-bold text-gray-900 mb-2">{feature.title}</h3>
+              <p className="text-sm text-gray-500 leading-relaxed">{feature.description}</p>
             </motion.div>
           ))}
         </div>

@@ -2,42 +2,36 @@ import { protectPage } from "@/lib/auth-utils";
 import OnboardingForm from "@/components/auth/OnboardingForm";
 import { Shield } from "lucide-react";
 import { prisma } from "@/lib/db";
+import Link from "next/link";
 
 export default async function OnboardingPage() {
   const session = await protectPage(true);
 
-  // Check for pending invitation
   const invitation = await prisma.invitation.findFirst({
     where: {
       email: session.user.email.toLowerCase(),
       status: "PENDING",
-      expiresAt: { gt: new Date() }
+      expiresAt: { gt: new Date() },
     },
-    include: {
-      organization: {
-        select: { name: true }
-      }
-    }
+    include: { organization: { select: { name: true } } },
   });
 
   return (
-    <main className="flex min-h-screen flex-col items-center justify-center bg-slate-950 px-6 py-12">
-      <div className="absolute inset-0 overflow-hidden pointer-events-none">
-        <div className="absolute top-0 left-1/2 -translate-x-1/2 h-[500px] w-full bg-[radial-gradient(circle_at_top,#0ea5e915_0%,transparent_70%)]" />
-      </div>
+    <main className="min-h-screen bg-gray-50 flex flex-col items-center justify-center px-6 py-12">
+      <Link href="/" className="flex items-center gap-2 font-black text-lg text-gray-900 mb-10">
+        <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-blue-600 text-white">
+          <Shield className="h-4 w-4" />
+        </div>
+        SecureShare
+      </Link>
 
-      <div className="mb-12 flex items-center gap-2 text-2xl font-black uppercase tracking-tighter text-white">
-        <Shield className="h-8 w-8 text-sky-500" />
-        SecureMail
-      </div>
-
-      <OnboardingForm 
-        userEmail={session.user.email} 
-        invitation={invitation ? { 
-          id: invitation.id, 
-          orgName: invitation.organization.name,
-          role: invitation.role 
-        } : undefined} 
+      <OnboardingForm
+        userEmail={session.user.email}
+        invitation={
+          invitation
+            ? { id: invitation.id, orgName: invitation.organization.name, role: invitation.role }
+            : undefined
+        }
       />
     </main>
   );

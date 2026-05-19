@@ -6,13 +6,8 @@ import EditProfileModal from "./EditProfileModal";
 import OrganizationManager from "./OrganizationManager";
 import SecurityCenter from "./SecurityCenter";
 import LogoutButton from "./LogoutButton";
-import { 
-  User, 
-  Shield, 
-  Building2, 
-  Edit3, 
-  Fingerprint
-} from "lucide-react";
+import { User, Shield, Building2, Edit3, CheckCircle2, Calendar, AtSign, UserCircle2, ClipboardList } from "lucide-react";
+import Link from "next/link";
 import { cn } from "@/lib/utils";
 
 interface ProfileUIProps {
@@ -21,142 +16,179 @@ interface ProfileUIProps {
   invitations: any[];
 }
 
+const AVATAR_PALETTE = [
+  "from-blue-500 to-blue-700",
+  "from-violet-500 to-purple-700",
+  "from-emerald-500 to-teal-700",
+  "from-amber-500 to-orange-600",
+  "from-rose-500 to-pink-700",
+];
+
+function getAvatarGradient(name: string): string {
+  return AVATAR_PALETTE[name.charCodeAt(0) % AVATAR_PALETTE.length];
+}
+
 export default function ProfileUI({ user, members, invitations }: ProfileUIProps) {
   const [activeTab, setActiveTab] = useState<"overview" | "security" | "organization">("overview");
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
-  const isAdminOrOwner = user.role === "OWNER" || user.role === "ADMIN";
 
   const tabs = [
-    { id: "overview", label: "Profile Overview", icon: User },
-    { id: "security", label: "Security Vault", icon: Shield },
+    { id: "overview", label: "Profile", icon: User },
+    { id: "security", label: "Security", icon: Shield },
     ...(user.orgId ? [{ id: "organization", label: "Organization", icon: Building2 }] : []),
   ] as const;
 
+  const gradient = getAvatarGradient(user.name || "U");
+
   return (
-    <div className="max-w-5xl mx-auto w-full space-y-12 pb-24">
-      {/* Header / Identity Area */}
-      <header className="flex flex-col items-center text-center space-y-4">
-        <div className="relative">
-          <div className="absolute inset-0 rounded-full bg-sky-500/20 blur-2xl animate-pulse" />
-          <div className="relative flex h-20 w-20 items-center justify-center rounded-3xl bg-linear-to-br from-sky-400 to-indigo-600 shadow-2xl border border-white/10">
-            <span className="text-3xl font-black text-white italic">{user.name?.charAt(0)}</span>
-          </div>
-        </div>
-        <div>
-          <h1 className="text-3xl font-black tracking-tight text-white uppercase italic">{user.name}</h1>
-          <p className="text-slate-500 font-bold text-sm tracking-wide">{user.email}</p>
-        </div>
-      </header>
+    <div className="max-w-4xl mx-auto w-full space-y-6 pb-24">
 
-      {/* Modern Tab Navigation */}
-      <nav className="flex items-center justify-center">
-        <div className="flex p-1 gap-1 rounded-2xl bg-slate-900/50 border border-slate-800 backdrop-blur-sm">
-          {tabs.map((tab) => (
-            <button
-              key={tab.id}
-              onClick={() => setActiveTab(tab.id as any)}
-              className={cn(
-                "flex items-center gap-2 px-6 py-2.5 rounded-xl text-xs font-black uppercase tracking-widest transition-all duration-300",
-                activeTab === tab.id 
-                  ? "bg-sky-500 text-slate-950 shadow-lg shadow-sky-500/20" 
-                  : "text-slate-500 hover:text-white hover:bg-slate-800"
-              )}
-            >
-              <tab.icon className="h-4 w-4" />
-              {tab.label}
-            </button>
-          ))}
+      {/* Profile Header Card */}
+      <div className="bg-white rounded-2xl border border-gray-200 p-6 flex flex-col sm:flex-row items-center sm:items-start gap-5">
+        <div className={cn(
+          "h-16 w-16 rounded-2xl bg-linear-to-br flex items-center justify-center text-white text-2xl font-black shrink-0 shadow-lg",
+          gradient
+        )}>
+          {user.name?.charAt(0)?.toUpperCase() || "U"}
         </div>
-      </nav>
+        <div className="flex-1 text-center sm:text-left min-w-0">
+          <h1 className="text-xl font-bold text-gray-900 truncate">{user.name}</h1>
+          <p className="text-sm text-gray-500 truncate">{user.email}</p>
+          {user.organization && (
+            <div className="mt-2 flex items-center justify-center sm:justify-start gap-1.5">
+              <span className="inline-flex items-center gap-1.5 text-[11px] font-bold text-blue-700 bg-blue-50 border border-blue-100 px-2.5 py-1 rounded-full uppercase tracking-widest">
+                <Building2 className="h-3 w-3" />
+                {user.organization.name}
+              </span>
+              <span className={cn(
+                "text-[11px] font-bold px-2.5 py-1 rounded-full uppercase tracking-widest border",
+                user.role === "OWNER" ? "bg-amber-50 text-amber-600 border-amber-200" :
+                user.role === "ADMIN" ? "bg-blue-50 text-blue-600 border-blue-200" :
+                "bg-gray-100 text-gray-500 border-gray-200"
+              )}>
+                {user.role}
+              </span>
+            </div>
+          )}
+        </div>
+        <button
+          onClick={() => setIsEditModalOpen(true)}
+          className="flex items-center gap-2 rounded-xl border border-gray-200 bg-gray-50 px-4 py-2 text-sm font-semibold text-gray-600 hover:bg-gray-100 hover:text-gray-900 hover:border-gray-300 transition-all shrink-0"
+        >
+          <Edit3 className="h-3.5 w-3.5" />
+          Edit
+        </button>
+      </div>
 
-      {/* Content Area */}
-      <main className="min-h-[400px]">
+      {/* Pill Tab Navigation */}
+      <div className="flex items-center gap-1.5 bg-gray-100/70 p-1.5 rounded-2xl w-fit">
+        {tabs.map((tab) => (
+          <button
+            key={tab.id}
+            onClick={() => setActiveTab(tab.id as any)}
+            className={cn(
+              "flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-semibold transition-all duration-200",
+              activeTab === tab.id
+                ? "bg-white text-blue-700 shadow-sm border border-gray-200"
+                : "text-gray-500 hover:text-gray-700"
+            )}
+          >
+            <tab.icon className="h-4 w-4" />
+            {tab.label}
+          </button>
+        ))}
+      </div>
+
+      {/* Tab Content */}
+      <div className="min-h-[400px]">
         {activeTab === "overview" && (
-          <motion.div 
-            initial={{ opacity: 0, y: 10 }}
+          <motion.div
+            initial={{ opacity: 0, y: 8 }}
             animate={{ opacity: 1, y: 0 }}
-            className="grid gap-6 md:grid-cols-2"
+            transition={{ duration: 0.2 }}
+            className="grid gap-5 md:grid-cols-2"
           >
             {/* Identity Details */}
-            <section className="glass-card p-8 border-sky-500/10 space-y-8">
-              <div className="flex items-center justify-between">
-                <h3 className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Identify Details</h3>
-                <button 
-                  onClick={() => setIsEditModalOpen(true)}
-                  className="p-2 rounded-lg bg-slate-800 text-slate-400 hover:text-white hover:bg-slate-700 transition-colors"
-                >
-                  <Edit3 className="h-4 w-4" />
-                </button>
-              </div>
-
-              <div className="space-y-4">
-                <div className="flex items-center justify-between p-4 rounded-xl bg-slate-900/50 border border-slate-800">
-                  <span className="text-xs text-slate-500 font-bold">Username</span>
-                  <span className="text-xs font-black text-sky-400 tracking-widest">@{user.displayUsername}</span>
-                </div>
-                <div className="flex items-center justify-between p-4 rounded-xl bg-slate-900/50 border border-slate-800">
-                  <span className="text-xs text-slate-500 font-bold">Role</span>
-                  <span className="text-[10px] px-2 py-0.5 rounded-md border border-sky-500/20 bg-sky-500/10 text-sky-400 font-black uppercase">
-                    {user.role}
-                  </span>
-                </div>
-                <div className="flex items-center justify-between p-4 rounded-xl bg-slate-900/50 border border-slate-800">
-                  <span className="text-xs text-slate-500 font-bold">Member Since</span>
-                  <span className="text-xs font-bold text-white">
-                    {new Date(user.createdAt).toLocaleDateString(undefined, { month: 'short', year: 'numeric' })}
-                  </span>
-                </div>
+            <section className="bg-white rounded-2xl border border-gray-200 p-6 space-y-4">
+              <h3 className="text-xs font-bold text-gray-400 uppercase tracking-widest">Identity Details</h3>
+              <div className="space-y-2">
+                {[
+                  {
+                    icon: AtSign,
+                    label: "Username",
+                    value: user.displayUsername ? `@${user.displayUsername}` : "—",
+                  },
+                  {
+                    icon: UserCircle2,
+                    label: "Role",
+                    value: user.role || "USER",
+                  },
+                  {
+                    icon: Calendar,
+                    label: "Member since",
+                    value: new Date(user.createdAt).toLocaleDateString(undefined, {
+                      month: "long",
+                      year: "numeric",
+                    }),
+                  },
+                ].map(({ icon: Icon, label, value }) => (
+                  <div
+                    key={label}
+                    className="flex items-center gap-3 py-2.5 px-3 rounded-xl bg-gray-50 border border-gray-100"
+                  >
+                    <Icon className="h-4 w-4 text-gray-400 shrink-0" />
+                    <span className="text-xs text-gray-500 font-medium flex-1">{label}</span>
+                    <span className="text-xs font-bold text-gray-800">{value}</span>
+                  </div>
+                ))}
               </div>
             </section>
 
-            {/* Account Status / Actions */}
-            <section className="glass-card p-8 border-sky-500/10 flex flex-col justify-between">
+            {/* Account Status + Logout */}
+            <section className="bg-white rounded-2xl border border-gray-200 p-6 flex flex-col justify-between gap-4">
               <div>
-                <h3 className="text-[10px] font-black text-slate-500 uppercase tracking-widest mb-6">Environment Status</h3>
-                <div className="p-4 rounded-2xl bg-emerald-500/5 border border-emerald-500/10 flex items-center gap-4">
-                  <div className="h-2 w-2 rounded-full bg-emerald-500 animate-pulse" />
+                <h3 className="text-xs font-bold text-gray-400 uppercase tracking-widest mb-4">Account Status</h3>
+                <div className="flex items-center gap-3 p-4 rounded-xl bg-emerald-50 border border-emerald-100">
+                  <CheckCircle2 className="h-5 w-5 text-emerald-500 shrink-0" />
                   <div>
-                    <p className="text-xs font-black text-white uppercase tracking-widest">Active & Encrypted</p>
-                    <p className="text-[10px] text-slate-500 font-bold">Zero-Knowledge Protocol Enabled</p>
+                    <p className="text-sm font-bold text-gray-900">Active & Encrypted</p>
+                    <p className="text-xs text-gray-400">Zero-Knowledge Protocol Enabled</p>
                   </div>
                 </div>
               </div>
-
-              <div className="mt-8">
-                <LogoutButton />
-              </div>
+              <LogoutButton />
             </section>
           </motion.div>
         )}
 
         {activeTab === "security" && (
-          <motion.div 
-            initial={{ opacity: 0, y: 10 }}
+          <motion.div
+            initial={{ opacity: 0, y: 8 }}
             animate={{ opacity: 1, y: 0 }}
-            className="grid gap-6 md:grid-cols-3"
+            transition={{ duration: 0.2 }}
+            className="grid gap-5 md:grid-cols-3"
           >
             <div className="md:col-span-1">
-              <section className="glass-card p-6 border-sky-500/10 h-full">
-                <div className="p-3 rounded-2xl bg-sky-500/10 text-sky-400 w-fit mb-4">
-                  <Fingerprint className="h-6 w-6" />
+              <section className="bg-white rounded-2xl border border-gray-200 p-6 h-full space-y-4">
+                <div className="p-2.5 rounded-xl bg-blue-50 text-blue-600 w-fit">
+                  <Shield className="h-5 w-5" />
                 </div>
-                <h3 className="text-xl font-black text-white uppercase italic tracking-tighter mb-2 leading-none">Vault Security</h3>
-                <p className="text-xs text-slate-500 font-bold leading-relaxed mb-6">
-                  Manage your cryptographic keys and master security password. These control the fundamental encryption of your data.
-                </p>
-                <div className="space-y-3">
-                  <div className="flex items-center gap-2 text-[10px] text-slate-400 font-black uppercase tracking-widest">
-                    <Shield className="h-3 w-3 text-emerald-500" />
-                    Encrypted Sync Active
-                  </div>
-                  <div className="flex items-center gap-2 text-[10px] text-slate-400 font-black uppercase tracking-widest">
-                    <Shield className="h-3 w-3 text-emerald-500" />
-                    Recovery Set Up
-                  </div>
+                <div>
+                  <h3 className="text-base font-bold text-gray-900 mb-1">Vault Security</h3>
+                  <p className="text-xs text-gray-500 leading-relaxed">
+                    Manage your cryptographic keys and master password. These control the fundamental encryption of your data.
+                  </p>
+                </div>
+                <div className="space-y-2 pt-2">
+                  {["Encrypted Sync Active", "Recovery Set Up"].map((item) => (
+                    <div key={item} className="flex items-center gap-2 text-xs text-gray-500">
+                      <CheckCircle2 className="h-3.5 w-3.5 text-emerald-500 shrink-0" />
+                      {item}
+                    </div>
+                  ))}
                 </div>
               </section>
             </div>
-            
             <div className="md:col-span-2">
               <SecurityCenter user={user} />
             </div>
@@ -164,20 +196,36 @@ export default function ProfileUI({ user, members, invitations }: ProfileUIProps
         )}
 
         {activeTab === "organization" && user.orgId && (
-          <motion.div 
-            initial={{ opacity: 0, y: 10 }}
+          <motion.div
+            initial={{ opacity: 0, y: 8 }}
             animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.2 }}
+            className="space-y-5"
           >
             <OrganizationManager user={user} members={members} invitations={invitations} />
+
+            {(user.role === "OWNER" || user.role === "ADMIN") && (
+              <Link
+                href="/audit"
+                className="flex items-center justify-between w-full p-4 rounded-2xl border border-gray-200 bg-white hover:border-blue-200 hover:bg-blue-50/40 transition-all group"
+              >
+                <div className="flex items-center gap-3">
+                  <div className="p-2 rounded-lg bg-gray-100 text-gray-500 group-hover:bg-blue-100 group-hover:text-blue-600 transition-colors">
+                    <ClipboardList className="h-4 w-4" />
+                  </div>
+                  <div>
+                    <p className="text-sm font-bold text-gray-800">Security Audit Log</p>
+                    <p className="text-[10px] text-gray-400 uppercase tracking-widest">View all org security events</p>
+                  </div>
+                </div>
+                <Shield className="h-4 w-4 text-gray-300 group-hover:text-blue-500 transition-colors" />
+              </Link>
+            )}
           </motion.div>
         )}
-      </main>
+      </div>
 
-      <EditProfileModal 
-        isOpen={isEditModalOpen} 
-        onClose={() => setIsEditModalOpen(false)} 
-        user={user} 
-      />
+      <EditProfileModal isOpen={isEditModalOpen} onClose={() => setIsEditModalOpen(false)} user={user} />
     </div>
   );
 }

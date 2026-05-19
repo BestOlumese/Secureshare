@@ -86,7 +86,7 @@ export async function inviteUserToOrg(email: string, role: "ADMIN" | "USER") {
           <h2 style="color: #0ea5e9; font-size: 24px; font-weight: 800; margin-bottom: 16px;">SecureMail Invitation</h2>
           <p style="font-size: 16px; line-height: 24px;">${session.user.name} has invited you to join <strong>${organization?.name}</strong> as a <strong>${role}</strong>.</p>
           <p style="font-size: 14px; color: #64748b; margin-bottom: 32px;">Please log in or sign up with this email address to accept your invitation and join the secure vault.</p>
-          <a href="${process.env.BETTER_AUTH_URL}/login" style="display: inline-block; background: #0ea5e9; color: white; padding: 14px 28px; text-decoration: none; border-radius: 12px; font-weight: bold; font-size: 14px;">Join Organization</a>
+          <a href="${process.env.BETTER_AUTH_URL}/invite/${invitation.id}" style="display: inline-block; background: #2563eb; color: white; padding: 14px 28px; text-decoration: none; border-radius: 12px; font-weight: bold; font-size: 14px;">Accept Invitation</a>
         </div>
       </div>
     `,
@@ -265,6 +265,59 @@ export async function updateOrganization(data: { name: string }) {
 }
 
 /**
+ * Looks up an invitation by ID for the accept page.
+ */
+export async function getInvitationById(invitationId: string) {
+  const invitation = await prisma.invitation.findUnique({
+    where: { id: invitationId },
+    include: { organization: { select: { name: true } } },
+  });
+  if (!invitation) return null;
+  return {
+    id: invitation.id,
+    email: invitation.email,
+    orgName: invitation.organization.name,
+    orgId: invitation.orgId,
+    role: invitation.role,
+    status: invitation.status,
+    expiresAt: invitation.expiresAt,
+  };
+}
+
+/**
+ * Accepts a pending invitation for the currently signed-in user.
+ */
+export async function acceptInvitation(invitationId: string) {
+  const session = await auth.api.getSession({ headers: await headers() });
+  if (!session) throw new Error("You must be signed in to accept an invitation.");
+
+  const invitation = await prisma.invitation.findUnique({
+    where: { id: invitationId },
+    include: { organization: { select: { name: true } } },
+  });
+
+  if (!invitation) throw new Error("Invitation not found.");
+  if (invitation.status !== "PENDING") throw new Error("This invitation is no longer valid.");
+  if (invitation.expiresAt < new Date()) throw new Error("This invitation has expired.");
+  if (invitation.email.toLowerCase() !== session.user.email.toLowerCase()) {
+    throw new Error("This invitation was sent to a different email address.");
+  }
+
+  await prisma.$transaction([
+    prisma.user.update({
+      where: { id: session.user.id },
+      data: { orgId: invitation.orgId, role: invitation.role },
+    }),
+    prisma.invitation.update({
+      where: { id: invitationId },
+      data: { status: "ACCEPTED" },
+    }),
+  ]);
+
+  return { success: true, orgName: invitation.organization.name };
+}
+
+/**
  * Gets a user's organization name by their email.
  */
 export async function getRecipientOrg(email: string) {
@@ -273,12 +326,87 @@ export async function getRecipientOrg(email: string) {
     select: {
       orgId: true,
       organization: {
-        select: { name: true }
-      }
-    }
+        select: { id: true, name: true },
+      },
+    },
   });
 
   return user?.organization || null;
+}
+
+/**
+ * Saves the organization's RSA key pair (owner only).
+ */
+export async function saveOrgKeys(data: {
+  publicKey: string;
+  encryptedPrivateKey: string;
+  salt: string;
+  iv: string;
+}) {
+  const session = await auth.api.getSession({ headers: await headers() });
+  if (!session?.user.orgId) throw new Error("Unauthorized");
+  if (session.user.role !== "OWNER") throw new Error("Only the org owner can generate org keys.");
+
+  await prisma.organization.update({
+    where: { id: session.user.orgId },
+    data: {
+      publicKey: data.publicKey,
+      encryptedPrivateKey: data.encryptedPrivateKey,
+      privateKeySalt: data.salt,
+      privateKeyIV: data.iv,
+    },
+  });
+
+  return { success: true };
+}
+
+/**
+ * Returns the org's public key by org ID (used during message composition).
+ */
+export async function getOrgPublicKey(orgId: string) {
+  const org = await prisma.organization.findUnique({
+    where: { id: orgId },
+    select: { publicKey: true },
+  });
+  return org?.publicKey || null;
+}
+
+/**
+ * Returns the org's encrypted private key for admin decryption.
+ */
+export async function getOrgKeySyncInfo() {
+  const session = await auth.api.getSession({ headers: await headers() });
+  if (!session?.user.orgId) throw new Error("Unauthorized");
+  if (session.user.role !== "OWNER" && session.user.role !== "ADMIN") {
+    throw new Error("Only org admins can access org vault keys.");
+  }
+
+  const org = await prisma.organization.findUnique({
+    where: { id: session.user.orgId },
+    select: { encryptedPrivateKey: true, privateKeySalt: true, privateKeyIV: true },
+  });
+
+  if (!org?.encryptedPrivateKey) throw new Error("Org vault keys not configured.");
+
+  return {
+    encryptedPrivateKey: org.encryptedPrivateKey,
+    salt: org.privateKeySalt!,
+    iv: org.privateKeyIV!,
+  };
+}
+
+/**
+ * Returns whether the current org has vault keys configured.
+ */
+export async function getOrgKeyStatus() {
+  const session = await auth.api.getSession({ headers: await headers() });
+  if (!session?.user.orgId) return { hasKeys: false };
+
+  const org = await prisma.organization.findUnique({
+    where: { id: session.user.orgId },
+    select: { publicKey: true },
+  });
+  return { hasKeys: !!org?.publicKey };
 }
 
 /**
@@ -300,4 +428,42 @@ export async function getRecipientsOrgs(emails: string[]) {
   });
 
   return users.map(u => ({ email: u.email, orgName: u.organization?.name }));
+}
+
+/**
+ * Returns paginated audit logs for admins (scoped to their org).
+ */
+export async function getAuditLogs(params: { cursor?: string; limit?: number } = {}) {
+  const session = await auth.api.getSession({ headers: await headers() });
+  if (!session?.user.orgId) throw new Error("Unauthorized");
+  if (session.user.role !== "OWNER" && session.user.role !== "ADMIN") {
+    throw new Error("Only org admins can view audit logs.");
+  }
+
+  const limit = params.limit ?? 50;
+
+  const logs = await prisma.auditLog.findMany({
+    where: {
+      OR: [
+        { initiatorOrgId: session.user.orgId },
+        { targetOrgId: session.user.orgId },
+        { userId: session.user.id },
+      ],
+    },
+    include: { user: { select: { name: true, email: true } } },
+    orderBy: { timestamp: "desc" },
+    take: limit,
+    ...(params.cursor ? { skip: 1, cursor: { id: params.cursor } } : {}),
+  });
+
+  return logs.map((l) => ({
+    id: l.id,
+    actionType: l.actionType,
+    timestamp: l.timestamp,
+    ipAddress: l.ipAddress,
+    metadata: l.metadata,
+    initiatorOrgId: l.initiatorOrgId,
+    targetOrgId: l.targetOrgId,
+    user: l.user,
+  }));
 }

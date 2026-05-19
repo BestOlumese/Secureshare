@@ -1,14 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { 
-  X, 
-  User, 
-  AtSign, 
-  Loader2, 
-  ShieldCheck,
-  CheckCircle2
-} from "lucide-react";
+import { X, User, AtSign, Loader2, CheckCircle2 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -34,17 +27,14 @@ export default function EditProfileModal({ isOpen, onClose, user }: EditProfileM
 
   const { register, handleSubmit, formState: { errors } } = useForm<ProfileData>({
     resolver: zodResolver(profileSchema),
-    defaultValues: {
-      name: user.name,
-      username: user.displayUsername || "",
-    }
+    defaultValues: { name: user.name, username: user.displayUsername || "" },
   });
 
   const onSubmit = async (data: ProfileData) => {
     setIsUpdating(true);
     try {
       await updateProfile(data);
-      toast.success("Profile updated successfully!");
+      toast.success("Profile updated!");
       onClose();
       window.location.reload();
     } catch (err: any) {
@@ -54,78 +44,46 @@ export default function EditProfileModal({ isOpen, onClose, user }: EditProfileM
     }
   };
 
+  const inputClass = "w-full rounded-xl border border-gray-200 bg-gray-50 py-3 pl-10 pr-4 text-sm text-gray-900 placeholder:text-gray-400 focus:border-blue-400 focus:outline-none focus:ring-2 focus:ring-blue-500/10 transition-all";
+
   return (
     <AnimatePresence>
       {isOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-          <motion.div
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            onClick={onClose}
-            className="absolute inset-0 bg-black/60 backdrop-blur-sm"
-          />
-          
-          <motion.div
-            initial={{ opacity: 0, scale: 0.95, y: 20 }}
-            animate={{ opacity: 1, scale: 1, y: 0 }}
-            exit={{ opacity: 0, scale: 0.95, y: 20 }}
-            className="relative w-full max-w-lg overflow-hidden rounded-3xl border border-slate-800 bg-[#0f172a] shadow-2xl"
-          >
-            <div className="flex items-center justify-between border-b border-slate-800 bg-slate-900/50 px-6 py-4">
-              <h2 className="text-lg font-bold text-white">Edit Profile</h2>
-              <button 
-                onClick={onClose}
-                className="rounded-full p-2 text-slate-500 hover:bg-slate-800 hover:text-white transition-colors"
-              >
+          <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={onClose} className="absolute inset-0 bg-black/40 backdrop-blur-sm" />
+          <motion.div initial={{ opacity: 0, scale: 0.95, y: 20 }} animate={{ opacity: 1, scale: 1, y: 0 }} exit={{ opacity: 0, scale: 0.95, y: 20 }} className="relative w-full max-w-md rounded-2xl border border-gray-200 bg-white shadow-xl overflow-hidden">
+            <div className="flex items-center justify-between border-b border-gray-100 px-6 py-4">
+              <h2 className="text-base font-bold text-gray-900">Edit Profile</h2>
+              <button onClick={onClose} className="p-1.5 rounded-lg text-gray-400 hover:text-gray-700 hover:bg-gray-100 transition-colors">
                 <X className="h-5 w-5" />
               </button>
             </div>
 
-            <form onSubmit={handleSubmit(onSubmit)} className="p-6 space-y-6">
-              <div className="space-y-4">
-                <div className="space-y-2">
-                  <label className="text-xs font-bold text-slate-500 uppercase tracking-widest ml-1">Full Name</label>
-                  <div className="relative">
-                    <User className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-500" />
-                    <input 
-                      {...register("name")}
-                      placeholder="Your name"
-                      className="w-full bg-slate-900/50 border border-slate-800 rounded-xl py-3 pl-10 pr-4 text-white focus:border-sky-500 focus:outline-none focus:ring-1 focus:ring-sky-500/50 transition-all"
-                    />
-                  </div>
-                  {errors.name && <p className="text-[10px] text-red-500 uppercase font-black ml-1">{errors.name.message}</p>}
+            <form onSubmit={handleSubmit(onSubmit)} className="p-6 space-y-4">
+              <div>
+                <label className="block text-xs font-bold text-gray-400 uppercase tracking-widest mb-1.5">Full Name</label>
+                <div className="relative">
+                  <User className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
+                  <input {...register("name")} placeholder="Your name" className={inputClass} />
                 </div>
-
-                <div className="space-y-2">
-                  <label className="text-xs font-bold text-slate-500 uppercase tracking-widest ml-1">Username</label>
-                  <div className="relative">
-                    <AtSign className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-500" />
-                    <input 
-                      {...register("username")}
-                      placeholder="username"
-                      className="w-full bg-slate-900/50 border border-slate-800 rounded-xl py-3 pl-10 pr-4 text-white focus:border-sky-500 focus:outline-none focus:ring-1 focus:ring-sky-500/50 transition-all font-mono text-sm"
-                    />
-                  </div>
-                  {errors.username && <p className="text-[10px] text-red-500 uppercase font-black ml-1">{errors.username.message}</p>}
-                </div>
+                {errors.name && <p className="mt-1 text-xs text-red-500">{errors.name.message}</p>}
               </div>
 
-              <div className="pt-4 border-t border-slate-800 flex gap-3">
-                <button
-                  type="button"
-                  onClick={onClose}
-                  className="flex-1 rounded-xl border border-slate-800 bg-slate-900/50 py-3 text-sm font-bold text-slate-400 hover:bg-slate-800 transition-all"
-                >
+              <div>
+                <label className="block text-xs font-bold text-gray-400 uppercase tracking-widest mb-1.5">Username</label>
+                <div className="relative">
+                  <AtSign className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
+                  <input {...register("username")} placeholder="username" className={`${inputClass} font-mono`} />
+                </div>
+                {errors.username && <p className="mt-1 text-xs text-red-500">{errors.username.message}</p>}
+              </div>
+
+              <div className="pt-4 border-t border-gray-100 flex gap-3">
+                <button type="button" onClick={onClose} className="flex-1 rounded-xl border border-gray-200 py-3 text-sm font-semibold text-gray-500 hover:bg-gray-50 transition-colors">
                   Cancel
                 </button>
-                <button
-                  type="submit"
-                  disabled={isUpdating}
-                  className="flex-[2] flex items-center justify-center gap-2 rounded-xl bg-sky-500 py-3 text-sm font-black text-white hover:bg-sky-400 transition-all shadow-lg shadow-sky-500/20"
-                >
-                  {isUpdating ? <Loader2 className="h-4 w-4 animate-spin" /> : <CheckCircle2 className="h-4 w-4" />}
-                  Save Changes
+                <button type="submit" disabled={isUpdating} className="flex-[2] flex items-center justify-center gap-2 rounded-xl bg-blue-600 py-3 text-sm font-bold text-white hover:bg-blue-700 transition-colors disabled:opacity-60">
+                  {isUpdating ? <Loader2 className="h-4 w-4 animate-spin" /> : <><CheckCircle2 className="h-4 w-4" /> Save Changes</>}
                 </button>
               </div>
             </form>

@@ -68,10 +68,11 @@ model Organization {
   privateKeySalt      String?
   privateKeyIV        String?
 
-  users       User[]
-  messages    Message[]
-  documents   Document[]
-  invitations Invitation[]
+  users         User[]
+  messages      Message[]
+  documents     Document[]
+  invitations   Invitation[]
+  messageShares MessageOrgShare[]
 
   @@map("organization")
 }
@@ -93,28 +94,46 @@ model Invitation {
 }
 
 model Message {
-  id         String   @id @default(cuid())
+  id         String    @id @default(cuid())
   senderId   String
   orgId      String?
   subject    String?
-  content    String?  @db.Text
-  createdAt  DateTime @default(now())
+  content    String?   @db.Text
+  expiryDate DateTime?
+  createdAt  DateTime  @default(now())
 
   sender       User               @relation("SentMessages", fields: [senderId], references: [id])
   organization Organization?      @relation(fields: [orgId], references: [id])
   documents    Document[]
   recipients   MessageRecipient[]
+  orgShares    MessageOrgShare[]
 
   @@map("message")
 }
 
+model MessageOrgShare {
+  id              String @id @default(cuid())
+  messageId       String
+  orgId           String
+  encryptedAesKey String @db.Text
+
+  message      Message      @relation(fields: [messageId], references: [id], onDelete: Cascade)
+  organization Organization @relation(fields: [orgId], references: [id])
+
+  @@unique([messageId, orgId])
+  @@map("message_org_share")
+}
+
 model MessageRecipient {
-  id              String   @id @default(cuid())
+  id              String    @id @default(cuid())
   messageId       String
   userId          String
-  encryptedAesKey String   @db.Text
-  role            String   @default("TO") // TO, CC
-  
+  encryptedAesKey String    @db.Text
+  role            String    @default("TO") // TO, CC
+  deletedAt       DateTime?
+  archivedAt      DateTime?
+  readAt          DateTime?
+
   message   Message  @relation(fields: [messageId], references: [id], onDelete: Cascade)
   user      User     @relation("ReceivedMessages", fields: [userId], references: [id])
 

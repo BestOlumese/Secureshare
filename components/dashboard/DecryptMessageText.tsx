@@ -1,21 +1,20 @@
 "use client";
 
 import React, { useState } from "react";
-import { 
-  unwrapAesKey, 
-  decryptString, 
-  decryptPrivateKeyFromSync 
-} from "@/lib/crypto-client";
+import { unwrapAesKey, decryptString, decryptPrivateKeyFromSync } from "@/lib/crypto-client";
 import { getMessageMetadata, getUserKeySyncInfo } from "@/app/actions/documents";
+import { getOrgKeySyncInfo } from "@/app/actions/org-actions";
 import { AnimatePresence, motion } from "framer-motion";
-import { X, Lock, Eye, EyeOff, Key, Loader2, ShieldCheck, LockOpen } from "lucide-react";
+import { X, Lock, Eye, EyeOff, Key, Loader2, ShieldCheck, LockOpen, Building2 } from "lucide-react";
 import { set as setKey, get as getKey } from "idb-keyval";
 import { toast } from "sonner";
-import { cn } from "@/lib/utils";
 
 interface DecryptMessageTextProps {
   messageId: string;
 }
+
+// Org key decryption mode: "personal" | "org"
+type DecryptMode = "personal" | "org";
 
 export default function DecryptMessageText({ messageId }: DecryptMessageTextProps) {
   const [isDecrypting, setIsDecrypting] = useState(false);
@@ -23,42 +22,50 @@ export default function DecryptMessageText({ messageId }: DecryptMessageTextProp
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [decryptedText, setDecryptedText] = useState<string | null>(null);
+  const [decryptMode, setDecryptMode] = useState<DecryptMode>("personal");
+  // Cached metadata so we don't fetch twice when prompting
+  const [cachedMeta, setCachedMeta] = useState<any>(null);
 
   async function handleDecrypt(recoveredKeyBuffer?: ArrayBuffer) {
     setIsDecrypting(true);
-
     const decryptPromise = async () => {
-      // 1. Get Private Key from IndexedDB or recovered buffer
-      let privateKeyBuffer = recoveredKeyBuffer || await getKey("secure-share-private-key");
-      
-      if (!privateKeyBuffer) {
+      const meta = cachedMeta || await getMessageMetadata(messageId);
+      if (!cachedMeta) setCachedMeta(meta);
+
+      const { content, encryptedAesKey, orgEncryptedAesKey } = meta;
+      if (!content) return "Message is empty.";
+
+      if (encryptedAesKey) {
+        // Personal recipient path — use personal private key
+        const privateKeyBuffer = recoveredKeyBuffer || await getKey("secure-share-private-key");
+        if (!privateKeyBuffer) {
+          setIsDecrypting(false);
+          setDecryptMode("personal");
+          setShowPasswordPrompt(true);
+          throw new Error("RECOVERY_REQUIRED");
+        }
+        const aesKey = await unwrapAesKey(encryptedAesKey, privateKeyBuffer as ArrayBuffer);
+        setDecryptedText(await decryptString(content, aesKey));
+        return "Message decrypted successfully!";
+      }
+
+      if (orgEncryptedAesKey) {
+        // Org vault path — must use org private key, never personal
         setIsDecrypting(false);
+        setDecryptMode("org");
         setShowPasswordPrompt(true);
         throw new Error("RECOVERY_REQUIRED");
       }
-      
-      const { content, encryptedAesKey } = await getMessageMetadata(messageId);
-      
-      if (!content) {
-        return "Message is empty.";
-      }
 
-      const aesKey = await unwrapAesKey(encryptedAesKey, privateKeyBuffer as ArrayBuffer);
-      const plainText = await decryptString(content, aesKey);
-      
-      setDecryptedText(plainText);
-      return "Message decrypted successfully!";
+      throw new Error("No decryption key available for this message.");
     };
 
     toast.promise(decryptPromise(), {
       loading: "Decrypting message...",
-      success: (msg) => {
-        setIsDecrypting(false);
-        return msg;
-      },
+      success: (msg) => { setIsDecrypting(false); return msg; },
       error: (err) => {
         setIsDecrypting(false);
-        if (err.message === "RECOVERY_REQUIRED") return "Master Password required for this device.";
+        if (err.message === "RECOVERY_REQUIRED") return decryptMode === "org" ? "Org Password required." : "Master Password required for this device.";
         return err.message || "Decryption failed.";
       },
     });
@@ -67,44 +74,46 @@ export default function DecryptMessageText({ messageId }: DecryptMessageTextProp
   const handleRecoverKey = async (e: React.FormEvent) => {
     e.preventDefault();
     setIsDecrypting(true);
-    
     const recoveryPromise = async () => {
-      const syncInfo: any = await getUserKeySyncInfo();
-      const recoveredKeyBuffer = await decryptPrivateKeyFromSync(
-        syncInfo.encryptedPrivateKey,
-        password,
-        syncInfo.salt,
-        syncInfo.iv
-      );
-      
-      await setKey("secure-share-private-key", recoveredKeyBuffer);
-      setShowPasswordPrompt(false);
-      setPassword("");
-      
-      await handleDecrypt(recoveredKeyBuffer);
-      return "Security key recovered!";
-    };
+      let recoveredKeyBuffer: ArrayBuffer;
 
-    toast.promise(recoveryPromise(), {
-      loading: "Recovering security keys...",
-      success: (msg) => {
-        setIsDecrypting(false);
-        return msg;
-      },
-      error: (err) => {
-        setIsDecrypting(false);
-        return err.message || "Recovery failed. Please check your credentials.";
+      if (decryptMode === "org") {
+        const orgSync = await getOrgKeySyncInfo();
+        recoveredKeyBuffer = await decryptPrivateKeyFromSync(orgSync.encryptedPrivateKey, password, orgSync.salt, orgSync.iv);
+        // Use org key directly (don't cache in IndexedDB — it's org-scoped)
+        setShowPasswordPrompt(false);
+        setPassword("");
+        // Decrypt using org key and org-encrypted AES key
+        const meta = cachedMeta || await getMessageMetadata(messageId);
+        if (!meta.orgEncryptedAesKey) throw new Error("No org key share for this message.");
+        const aesKey = await unwrapAesKey(meta.orgEncryptedAesKey, recoveredKeyBuffer);
+        const plainText = await decryptString(meta.content, aesKey);
+        setDecryptedText(plainText);
+        return "Message decrypted via Org Vault!";
+      } else {
+        const syncInfo: any = await getUserKeySyncInfo();
+        recoveredKeyBuffer = await decryptPrivateKeyFromSync(syncInfo.encryptedPrivateKey, password, syncInfo.salt, syncInfo.iv);
+        await setKey("secure-share-private-key", recoveredKeyBuffer);
+        setShowPasswordPrompt(false);
+        setPassword("");
+        await handleDecrypt(recoveredKeyBuffer);
+        return "Security key recovered!";
       }
+    };
+    toast.promise(recoveryPromise(), {
+      loading: decryptMode === "org" ? "Unlocking org vault..." : "Recovering security keys...",
+      success: (msg) => { setIsDecrypting(false); return msg; },
+      error: (err) => { setIsDecrypting(false); return err.message || "Recovery failed."; },
     });
   };
 
   if (decryptedText !== null) {
     return (
-      <div className="p-6 rounded-2xl bg-sky-900/10 border border-sky-500/20 text-slate-200">
-        <p className="whitespace-pre-wrap leading-relaxed">{decryptedText}</p>
-        <div className="mt-4 flex items-center gap-2 text-[10px] font-black uppercase tracking-widest text-emerald-400">
-          <ShieldCheck className="h-4 w-4" />
-          Decrypted Locally
+      <div className="p-5 rounded-xl bg-blue-50 border border-blue-100 text-gray-800">
+        <p className="whitespace-pre-wrap leading-relaxed text-sm">{decryptedText}</p>
+        <div className="mt-4 flex items-center gap-2 text-[10px] font-bold uppercase tracking-widest text-emerald-600">
+          <ShieldCheck className="h-3.5 w-3.5" />
+          Decrypted locally
         </div>
       </div>
     );
@@ -112,86 +121,91 @@ export default function DecryptMessageText({ messageId }: DecryptMessageTextProp
 
   return (
     <>
-      <div className="p-8 rounded-2xl bg-slate-900/30 border border-slate-800 border-dashed text-center">
-        <Lock className="h-8 w-8 mx-auto mb-4 text-slate-700" />
-        <p className="text-slate-400 mb-6">This message content is protected by Zero-Knowledge encryption.</p>
+      <div className="p-8 rounded-xl border border-dashed border-gray-200 bg-gray-50 text-center">
+        <Lock className="h-7 w-7 mx-auto mb-3 text-gray-300" />
+        <p className="text-sm text-gray-400 mb-5">
+          This message is protected by zero-knowledge encryption.
+        </p>
         <button
           onClick={() => handleDecrypt()}
           disabled={isDecrypting}
-          className="inline-flex items-center gap-2 rounded-xl bg-slate-800 px-6 py-3 text-sm font-bold text-white hover:bg-slate-700 transition-colors disabled:opacity-50"
+          className="inline-flex items-center gap-2 rounded-xl bg-blue-600 px-5 py-2.5 text-sm font-bold text-white hover:bg-blue-700 transition-colors disabled:opacity-50"
         >
-          {isDecrypting ? (
-            <Loader2 className="h-5 w-5 animate-spin" />
-          ) : (
-            <LockOpen className="h-5 w-5" />
-          )}
+          {isDecrypting ? <Loader2 className="h-4 w-4 animate-spin" /> : <LockOpen className="h-4 w-4" />}
           Decrypt Message
         </button>
       </div>
 
       <AnimatePresence>
         {showPasswordPrompt && (
-          <div className="fixed inset-0 z-[60] flex items-center justify-center p-4">
+          <div className="fixed inset-0 z-60 flex items-center justify-center p-4">
             <motion.div
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              exit={{ opacity: 0 }}
+              initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
               onClick={() => setShowPasswordPrompt(false)}
-              className="absolute inset-0 bg-black/80 backdrop-blur-md"
+              className="absolute inset-0 bg-black/40 backdrop-blur-sm"
             />
-            
             <motion.div
               initial={{ opacity: 0, scale: 0.95, y: 20 }}
               animate={{ opacity: 1, scale: 1, y: 0 }}
               exit={{ opacity: 0, scale: 0.95, y: 20 }}
-              className="relative w-full max-w-md overflow-hidden rounded-3xl border border-slate-800 bg-[#0f172a] shadow-2xl p-8"
+              className="relative w-full max-w-md rounded-2xl border border-gray-200 bg-white shadow-xl p-8"
             >
               <div className="flex items-center justify-between mb-6">
                 <div className="flex items-center gap-3">
-                  <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-sky-500/10 text-sky-400">
-                    <Key className="h-5 w-5" />
+                  <div className={`flex h-10 w-10 items-center justify-center rounded-xl ${decryptMode === "org" ? "bg-blue-50 text-blue-600" : "bg-blue-50 text-blue-600"}`}>
+                    {decryptMode === "org" ? <Building2 className="h-5 w-5" /> : <Key className="h-5 w-5" />}
                   </div>
-                  <h2 className="text-xl font-bold text-white tracking-tight">
-                    Recover Vault
+                  <h2 className="text-lg font-bold text-gray-900">
+                    {decryptMode === "org" ? "Org Vault Decrypt" : "Recover Vault"}
                   </h2>
                 </div>
-                <button onClick={() => setShowPasswordPrompt(false)} className="text-slate-500 hover:text-white transition-colors">
+                <button onClick={() => setShowPasswordPrompt(false)} className="text-gray-400 hover:text-gray-700">
                   <X className="h-5 w-5" />
                 </button>
               </div>
 
-              <p className="text-sm text-slate-400 mb-6 leading-relaxed">
-                Your security keys are missing. Enter your Master Password to recover them securely.
+              <p className="text-sm text-gray-500 mb-6 leading-relaxed">
+                {decryptMode === "org"
+                  ? "Enter your Organization Security Password to decrypt this message via the org vault."
+                  : "Your security keys are missing on this device. Enter your Master Password to recover them."}
               </p>
 
-              <form onSubmit={handleRecoverKey} className="space-y-6">
-                <div className="space-y-2">
-                  <div className="relative">
-                    <Lock className="absolute left-3 top-1/2 h-5 w-5 -translate-y-1/2 text-slate-500" />
-                    <input
-                      type={showPassword ? "text" : "password"}
-                      value={password}
-                      onChange={(e) => setPassword(e.target.value)}
-                      placeholder="Master Security Password"
-                      autoFocus
-                      className="w-full rounded-xl border border-slate-800 bg-slate-900/50 py-3 pl-10 pr-12 text-white placeholder:text-slate-700 focus:border-sky-500 focus:outline-none focus:ring-1 focus:ring-sky-500"
-                    />
-                    <button
-                      type="button"
-                      onClick={() => setShowPassword(!showPassword)}
-                      className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-500 hover:text-slate-300"
-                    >
-                      {showPassword ? <EyeOff className="h-5 w-5" /> : <Eye className="h-5 w-5" />}
-                    </button>
-                  </div>
+              <form onSubmit={handleRecoverKey} className="space-y-4">
+                <div className="relative">
+                  <Lock className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400" />
+                  <input
+                    type={showPassword ? "text" : "password"}
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    placeholder={decryptMode === "org" ? "Org Security Password" : "Master Security Password"}
+                    autoFocus
+                    className="w-full rounded-xl border border-gray-200 bg-gray-50 py-3 pl-10 pr-12 text-gray-900 placeholder:text-gray-400 focus:border-blue-400 focus:outline-none focus:ring-2 focus:ring-blue-500/10"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowPassword(!showPassword)}
+                    className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-700"
+                  >
+                    {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                  </button>
                 </div>
+
+                {cachedMeta?.orgEncryptedAesKey && (
+                  <button
+                    type="button"
+                    onClick={() => { setDecryptMode(decryptMode === "org" ? "personal" : "org"); setPassword(""); }}
+                    className="text-xs font-semibold text-blue-600 hover:text-blue-700"
+                  >
+                    {decryptMode === "org" ? "Use personal Master Password instead" : "Decrypt with Org Vault Key"}
+                  </button>
+                )}
 
                 <button
                   type="submit"
                   disabled={isDecrypting || !password}
-                  className="premium-button w-full flex items-center justify-center gap-2 py-3"
+                  className="w-full flex items-center justify-center gap-2 rounded-xl bg-blue-600 py-3 text-sm font-bold text-white hover:bg-blue-700 transition-colors disabled:opacity-60"
                 >
-                  {isDecrypting ? <Loader2 className="h-5 w-5 animate-spin" /> : "Recover & Decrypt"}
+                  {isDecrypting ? <Loader2 className="h-4 w-4 animate-spin" /> : decryptMode === "org" ? "Decrypt via Org Vault" : "Recover & Decrypt"}
                 </button>
               </form>
             </motion.div>

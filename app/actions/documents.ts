@@ -3,6 +3,7 @@
 import { prisma } from "@/lib/db";
 import { auth } from "@/lib/auth";
 import { headers } from "next/headers";
+import { transporter } from "@/lib/mailer";
 
 /**
  * Fetches the public keys of multiple users by their emails.
@@ -52,8 +53,10 @@ export async function getSenderPublicKey() {
  */
 export async function sendSecureMessage(data: {
   subject?: string;
-  content?: string; // encrypted content
+  content?: string;
+  expiryDate?: Date;
   messageKeyShares: Array<{ userId: string; encryptedAesKey: string; role?: string }>;
+  orgKeyShares?: Array<{ orgId: string; encryptedAesKey: string }>;
   attachments: Array<{
     fileUrl: string;
     fileName: string;
@@ -69,6 +72,15 @@ export async function sendSecureMessage(data: {
   if (!session) throw new Error("Unauthorized");
   const userId = session.user.id;
 
+  // Rate limit: max 20 messages per hour per user
+  const oneHourAgo = new Date(Date.now() - 60 * 60 * 1000);
+  const recentCount = await prisma.message.count({
+    where: { senderId: userId, createdAt: { gte: oneHourAgo } },
+  });
+  if (recentCount >= 20) {
+    throw new Error("Rate limit reached. You can send up to 20 messages per hour.");
+  }
+
   // Fetch sender's organization
   const sender = await prisma.user.findUnique({
     where: { id: userId },
@@ -83,6 +95,7 @@ export async function sendSecureMessage(data: {
         senderId: userId,
         subject: data.subject,
         content: data.content,
+        expiryDate: data.expiryDate,
         orgId: sender?.orgId,
         recipients: {
           create: data.messageKeyShares.map((share) => ({
@@ -91,6 +104,14 @@ export async function sendSecureMessage(data: {
             role: share.role || "TO",
           })),
         },
+        orgShares: data.orgKeyShares?.length
+          ? {
+              create: data.orgKeyShares.map((share) => ({
+                orgId: share.orgId,
+                encryptedAesKey: share.encryptedAesKey,
+              })),
+            }
+          : undefined,
       },
     });
 
@@ -125,12 +146,12 @@ export async function sendSecureMessage(data: {
   // 3. Log the action (Cross-Org Tracking)
   // We identify target organizations by the recipients
   const recipientUserIds = data.messageKeyShares.map(s => s.userId);
-  const recipientUsers = await prisma.user.findMany({
+  const recipientOrgs = await prisma.user.findMany({
     where: { id: { in: recipientUserIds } },
     select: { orgId: true },
   });
   
-  const targetOrgIds = Array.from(new Set(recipientUsers.map(u => u.orgId).filter(Boolean))) as string[];
+  const targetOrgIds = Array.from(new Set(recipientOrgs.map(u => u.orgId).filter(Boolean))) as string[];
 
   // Log for each target organization if it's different from sender's
   for (const targetOrgId of targetOrgIds) {
@@ -164,7 +185,111 @@ export async function sendSecureMessage(data: {
     },
   });
 
+  // Send email notifications to recipients
+  const senderUser = await prisma.user.findUnique({
+    where: { id: userId },
+    select: { name: true, email: true },
+  });
+  const recipientUsers = await prisma.user.findMany({
+    where: { id: { in: data.messageKeyShares.map((s) => s.userId).filter((id) => id !== userId) } },
+    select: { email: true, name: true },
+  });
+
+  if (recipientUsers.length > 0) {
+    const appUrl = process.env.BETTER_AUTH_URL || "http://localhost:3000";
+    const emailSubject = data.subject ? `"${data.subject}"` : "a secure message";
+    const attachmentNote = data.attachments.length > 0
+      ? `<p style="color:#64748b;font-size:14px;">It includes <strong>${data.attachments.length} encrypted attachment${data.attachments.length > 1 ? "s" : ""}</strong>.</p>`
+      : "";
+
+    // Verify SMTP connection before sending
+    try {
+      await transporter.verify();
+    } catch (err) {
+      console.error("[mailer] SMTP connection failed:", err);
+    }
+
+    const emailResults = await Promise.allSettled(
+      recipientUsers.map((r) =>
+        transporter.sendMail({
+          from: `"SecureShare" <${process.env.SMTP_USER}>`,
+          to: r.email,
+          subject: `New secure message from ${senderUser?.name || senderUser?.email}`,
+          html: `
+            <div style="font-family:sans-serif;padding:40px;color:#1e293b;background:#f8fafc;">
+              <div style="max-width:560px;margin:0 auto;background:white;padding:40px;border-radius:20px;border:1px solid #e2e8f0;">
+                <div style="display:flex;align-items:center;gap:10px;margin-bottom:28px;">
+                  <div style="background:#2563eb;width:36px;height:36px;border-radius:10px;display:flex;align-items:center;justify-content:center;">
+                    <span style="color:white;font-size:18px;font-weight:900;">S</span>
+                  </div>
+                  <span style="font-size:16px;font-weight:800;color:#1e293b;">SecureShare</span>
+                </div>
+                <h2 style="font-size:20px;font-weight:700;color:#1e293b;margin:0 0 8px;">You have a new encrypted message</h2>
+                <p style="color:#64748b;font-size:14px;margin:0 0 16px;">
+                  <strong style="color:#1e293b;">${senderUser?.name || senderUser?.email}</strong> sent you ${emailSubject}.
+                </p>
+                ${attachmentNote}
+                <p style="color:#94a3b8;font-size:12px;margin:0 0 24px;">The message is end-to-end encrypted. Only you can decrypt it using your vault key.</p>
+                <a href="${appUrl}/dashboard" style="display:inline-block;background:#2563eb;color:white;padding:12px 28px;text-decoration:none;border-radius:12px;font-weight:700;font-size:14px;">
+                  Open Secure Inbox
+                </a>
+              </div>
+            </div>
+          `,
+        })
+      )
+    );
+
+    emailResults.forEach((res, i) => {
+      if (res.status === "rejected") {
+        console.error(`[mailer] Failed to send to ${recipientUsers[i].email}:`, res.reason);
+      } else {
+        console.log(`[mailer] Sent to ${recipientUsers[i].email}: messageId=${res.value.messageId}`);
+      }
+    });
+  }
+
   return { success: true, messageId: result.message.id };
+}
+
+/**
+ * Soft-deletes a message for the current user only.
+ */
+export async function deleteMessageForUser(messageId: string) {
+  const session = await auth.api.getSession({ headers: await headers() });
+  if (!session) throw new Error("Unauthorized");
+
+  const recipient = await prisma.messageRecipient.findUnique({
+    where: { messageId_userId: { messageId, userId: session.user.id } },
+  });
+  if (!recipient) throw new Error("Message not found.");
+
+  await prisma.messageRecipient.update({
+    where: { messageId_userId: { messageId, userId: session.user.id } },
+    data: { deletedAt: new Date() },
+  });
+
+  return { success: true };
+}
+
+/**
+ * Archives or un-archives a message for the current user.
+ */
+export async function toggleArchiveMessage(messageId: string) {
+  const session = await auth.api.getSession({ headers: await headers() });
+  if (!session) throw new Error("Unauthorized");
+
+  const recipient = await prisma.messageRecipient.findUnique({
+    where: { messageId_userId: { messageId, userId: session.user.id } },
+  });
+  if (!recipient) throw new Error("Message not found.");
+
+  await prisma.messageRecipient.update({
+    where: { messageId_userId: { messageId, userId: session.user.id } },
+    data: { archivedAt: recipient.archivedAt ? null : new Date() },
+  });
+
+  return { success: true, archived: !recipient.archivedAt };
 }
 
 /**
@@ -177,22 +302,33 @@ export async function getDocumentMetadata(docId: string) {
 
   if (!session) throw new Error("Unauthorized");
 
+  const isAdmin = session.user.role === "OWNER" || session.user.role === "ADMIN";
+
   const doc = await prisma.document.findUnique({
     where: { id: docId },
     include: {
-      recipients: {
-        where: { userId: session.user.id },
-      },
+      recipients: { where: { userId: session.user.id } },
+      message: isAdmin && session.user.orgId
+        ? { include: { orgShares: { where: { orgId: session.user.orgId } } } }
+        : false,
     },
   });
 
   if (!doc) throw new Error("Document not found.");
 
-  // Access Control: Must be an explicit recipient (or sender, who is also a recipient now)
+  // Enforce expiry
+  if (doc.expiryDate && doc.expiryDate < new Date() && doc.status !== "Expired") {
+    await prisma.document.update({ where: { id: docId }, data: { status: "Expired" } });
+    throw new Error("This document has expired and can no longer be accessed.");
+  }
+  if (doc.status === "Expired") {
+    throw new Error("This document has expired and can no longer be accessed.");
+  }
+
   const userShare = doc.recipients[0];
-  
-  if (!userShare) {
-    // Admin paradox fixed: Admins can no longer bypass decryption!
+  const orgShare = (doc as any).message?.orgShares?.[0];
+
+  if (!userShare && !orgShare) {
     throw new Error("Access denied. You are not a recipient of this document.");
   }
 
@@ -211,7 +347,8 @@ export async function getDocumentMetadata(docId: string) {
 
   return {
     fileUrl: doc.fileUrl,
-    encryptedAesKey: userShare.encryptedAesKey,
+    encryptedAesKey: userShare?.encryptedAesKey ?? null,
+    orgEncryptedAesKey: orgShare?.encryptedAesKey ?? null,
     fileName: doc.fileName || `secure-file-${docId.slice(0, 8)}`,
     contentType: doc.contentType || "application/octet-stream",
   };
@@ -227,39 +364,51 @@ export async function getMessageMetadata(messageId: string) {
 
   if (!session) throw new Error("Unauthorized");
 
+  const isAdmin = session.user.role === "OWNER" || session.user.role === "ADMIN";
+
   const message = await prisma.message.findUnique({
     where: { id: messageId },
     include: {
       recipients: {
         where: { userId: session.user.id },
       },
+      orgShares: isAdmin && session.user.orgId
+        ? { where: { orgId: session.user.orgId } }
+        : false,
       documents: {
         include: {
           recipients: {
             where: { userId: session.user.id },
-          }
-        }
-      }
+          },
+        },
+      },
     },
   });
 
   if (!message) throw new Error("Message not found.");
 
+  if (message.expiryDate && message.expiryDate < new Date()) {
+    throw new Error("This message has expired and can no longer be accessed.");
+  }
+
   const userShare = message.recipients[0];
-  if (!userShare) {
+  const orgShare = (message as any).orgShares?.[0];
+
+  if (!userShare && !orgShare) {
     throw new Error("Access denied.");
   }
 
   return {
     subject: message.subject,
-    content: message.content, // encrypted
-    encryptedAesKey: userShare.encryptedAesKey,
-    documents: message.documents.map(d => ({
+    content: message.content,
+    encryptedAesKey: userShare?.encryptedAesKey ?? null,
+    orgEncryptedAesKey: orgShare?.encryptedAesKey ?? null,
+    documents: message.documents.map((d) => ({
       id: d.id,
       fileName: d.fileName,
       contentType: d.contentType,
-      encryptedAesKey: d.recipients[0]?.encryptedAesKey,
-    }))
+      encryptedAesKey: d.recipients[0]?.encryptedAesKey ?? null,
+    })),
   };
 }
 
@@ -297,4 +446,164 @@ export async function getUserKeySyncInfo() {
     recoverySalt: user.recoverySalt,
     recoveryIV: user.recoveryIV,
   };
+}
+
+const MESSAGE_INCLUDE = {
+  sender: true,
+  recipients: { include: { user: true } },
+  documents: true,
+} as const;
+
+const PAGE_SIZE = 50;
+
+export async function loadMoreMessages(params: {
+  view: "inbox" | "sent" | "archived" | "vault";
+  cursor: string;
+}) {
+  const session = await auth.api.getSession({ headers: await headers() });
+  if (!session) throw new Error("Unauthorized");
+
+  const { view, cursor } = params;
+  const userId = session.user.id;
+  const isAdmin = session.user.role === "OWNER" || session.user.role === "ADMIN";
+
+  const shared = {
+    include: MESSAGE_INCLUDE,
+    orderBy: { createdAt: "desc" as const },
+    take: PAGE_SIZE,
+    skip: 1,
+    cursor: { id: cursor },
+  };
+
+  if (view === "inbox") {
+    return prisma.message.findMany({
+      where: { recipients: { some: { userId, deletedAt: null, archivedAt: null } }, senderId: { not: userId } },
+      ...shared,
+    });
+  }
+  if (view === "sent") {
+    return prisma.message.findMany({
+      where: { senderId: userId },
+      ...shared,
+    });
+  }
+  if (view === "archived") {
+    return prisma.message.findMany({
+      where: { recipients: { some: { userId, archivedAt: { not: null }, deletedAt: null } } },
+      ...shared,
+    });
+  }
+  if (view === "vault" && isAdmin && session.user.orgId) {
+    return prisma.message.findMany({
+      where: { orgShares: { some: { orgId: session.user.orgId } } },
+      ...shared,
+    });
+  }
+  return [];
+}
+
+export async function markMessageRead(messageId: string) {
+  const session = await auth.api.getSession({ headers: await headers() });
+  if (!session) throw new Error("Unauthorized");
+
+  await prisma.messageRecipient.updateMany({
+    where: { messageId, userId: session.user.id, readAt: null },
+    data: { readAt: new Date() },
+  });
+  return { success: true };
+}
+
+export async function fetchNewMessages(params: {
+  view: "inbox" | "sent" | "archived" | "vault";
+  after: string; // ISO date string of the latest message we already have
+}) {
+  const session = await auth.api.getSession({ headers: await headers() });
+  if (!session) throw new Error("Unauthorized");
+
+  const userId = session.user.id;
+  const isAdmin = session.user.role === "OWNER" || session.user.role === "ADMIN";
+  const afterDate = new Date(params.after);
+
+  const shared = {
+    include: MESSAGE_INCLUDE,
+    orderBy: { createdAt: "desc" as const },
+  };
+
+  if (params.view === "inbox") {
+    return prisma.message.findMany({
+      where: {
+        createdAt: { gt: afterDate },
+        recipients: { some: { userId, deletedAt: null, archivedAt: null } },
+        senderId: { not: userId },
+      },
+      ...shared,
+    });
+  }
+  if (params.view === "sent") {
+    return prisma.message.findMany({
+      where: { createdAt: { gt: afterDate }, senderId: userId },
+      ...shared,
+    });
+  }
+  if (params.view === "archived") {
+    return prisma.message.findMany({
+      where: {
+        createdAt: { gt: afterDate },
+        recipients: { some: { userId, archivedAt: { not: null }, deletedAt: null } },
+      },
+      ...shared,
+    });
+  }
+  if (params.view === "vault" && isAdmin && session.user.orgId) {
+    return prisma.message.findMany({
+      where: {
+        createdAt: { gt: afterDate },
+        orgShares: { some: { orgId: session.user.orgId } },
+      },
+      ...shared,
+    });
+  }
+  return [];
+}
+
+export async function getSessions() {
+  const session = await auth.api.getSession({ headers: await headers() });
+  if (!session) throw new Error("Unauthorized");
+
+  const sessions = await prisma.session.findMany({
+    where: { userId: session.user.id },
+    orderBy: { createdAt: "desc" },
+  });
+
+  return sessions.map((s) => ({
+    id: s.id,
+    createdAt: s.createdAt,
+    expiresAt: s.expiresAt,
+    ipAddress: s.ipAddress,
+    userAgent: s.userAgent,
+    isCurrent: s.id === session.session.id,
+  }));
+}
+
+export async function revokeSession(sessionId: string) {
+  const session = await auth.api.getSession({ headers: await headers() });
+  if (!session) throw new Error("Unauthorized");
+
+  await prisma.session.deleteMany({
+    where: { id: sessionId, userId: session.user.id },
+  });
+
+  return { success: true };
+}
+
+export async function markAllMessagesRead() {
+  const session = await auth.api.getSession({ headers: await headers() });
+  if (!session) throw new Error("Unauthorized");
+
+  await prisma.messageRecipient.updateMany({
+    where: { userId: session.user.id, readAt: null, deletedAt: null },
+    data: { readAt: new Date() },
+  });
+
+  return { success: true };
 }

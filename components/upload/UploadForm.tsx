@@ -143,100 +143,74 @@ export default function UploadForm() {
     });
   }
 
+  const fieldClass = "w-full rounded-xl border border-gray-200 bg-white py-3 px-4 text-sm text-gray-900 placeholder:text-gray-400 focus:border-blue-400 focus:outline-none focus:ring-2 focus:ring-blue-500/10 transition-all";
+
   return (
-    <div className="w-full max-w-2xl">
-      <form onSubmit={handleSubmit(onSubmit)} className="space-y-6">
-        
-        {/* Recipients Input */}
-        <div className="space-y-2">
-          <label className="text-sm font-medium text-slate-300">Recipients (comma separated)</label>
+    <div className="w-full bg-white rounded-2xl border border-gray-200 shadow-sm p-8">
+      <form onSubmit={handleSubmit(onSubmit)} className="space-y-5">
+
+        {/* Recipients */}
+        <div>
+          <label className="block text-sm font-semibold text-gray-700 mb-1.5">Recipients</label>
           <div className="relative">
-            <Users className="absolute left-3 top-1/2 h-5 w-5 -translate-y-1/2 text-slate-500" />
+            <Users className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400" />
             <input
               {...register("receiverEmails")}
               placeholder="user1@company.com, user2@domain.com"
-              className="w-full rounded-xl border border-slate-800 bg-slate-900/50 py-3 pl-10 pr-4 text-white focus:border-sky-500 focus:outline-none focus:ring-1 focus:ring-sky-500"
+              className={`${fieldClass} pl-10`}
             />
           </div>
-          {errors.receiverEmails && <p className="mt-1 text-sm text-red-400">{errors.receiverEmails.message}</p>}
+          {errors.receiverEmails && <p className="mt-1 text-xs text-red-500">{errors.receiverEmails.message}</p>}
         </div>
 
-        {/* Subject Input */}
-        <div className="space-y-2">
-          <label className="text-sm font-medium text-slate-300">Subject (Optional)</label>
-          <div className="relative">
-            <input
-              {...register("subject")}
-              placeholder="Secure Documents Attached"
-              className="w-full rounded-xl border border-slate-800 bg-slate-900/50 py-3 px-4 text-white focus:border-sky-500 focus:outline-none focus:ring-1 focus:ring-sky-500"
-            />
-          </div>
+        {/* Subject */}
+        <div>
+          <label className="block text-sm font-semibold text-gray-700 mb-1.5">Subject <span className="text-gray-400 font-normal">(optional)</span></label>
+          <input {...register("subject")} placeholder="Secure Documents Attached" className={fieldClass} />
         </div>
 
-        {/* Message Input */}
-        <div className="space-y-2">
-          <label className="text-sm font-medium text-slate-300">Secure Message</label>
+        {/* Message */}
+        <div>
+          <label className="block text-sm font-semibold text-gray-700 mb-1.5">Message <span className="text-gray-400 font-normal">(optional)</span></label>
           <div className="relative">
-            <MessageSquare className="absolute left-3 top-3 h-5 w-5 text-slate-500" />
+            <MessageSquare className="absolute left-3 top-3 h-4 w-4 text-gray-400" />
             <textarea
               {...register("content")}
               placeholder="Type your secure message here. It will be E2E encrypted."
               rows={4}
-              className="w-full rounded-xl border border-slate-800 bg-slate-900/50 py-3 pl-10 pr-4 text-white focus:border-sky-500 focus:outline-none focus:ring-1 focus:ring-sky-500 resize-none"
+              className={`${fieldClass} pl-10 resize-none`}
             />
           </div>
         </div>
 
         {/* File Dropzone */}
-        <div className="glass-card flex flex-col items-center justify-center border-dashed border-2 border-slate-800 p-8 transition-all hover:border-sky-500/50">
-          <input
-            type="file"
-            id="file-upload"
-            className="hidden"
-            onChange={onFileChange}
-          />
-          <label
-            htmlFor="file-upload"
-            className="flex cursor-pointer flex-col items-center gap-4 text-center"
-          >
-            <div className="flex h-12 w-12 items-center justify-center rounded-full bg-sky-500/10 text-sky-400">
-              {file ? <Lock className="h-6 w-6" /> : <FileUp className="h-6 w-6" />}
-            </div>
-            <div>
-              <p className="text-base font-bold text-white">
-                {file ? file.name : "Attach a file"}
-              </p>
-              <p className="text-xs text-slate-500">
-                {file ? `${(file.size / 1024 / 1024).toFixed(2)} MB` : "Optional attachment"}
-              </p>
-            </div>
-          </label>
-        </div>
-
-        {/* Security Alert */}
-        <div className="rounded-xl border border-sky-500/20 bg-sky-500/5 p-4 text-sm text-sky-400">
-          <div className="flex gap-3">
-            <ShieldCheck className="h-5 w-5 shrink-0" />
-            <p>Your message and file will be encrypted using 256-bit AES. We never see your plaintext data.</p>
+        <div>
+          <label className="block text-sm font-semibold text-gray-700 mb-1.5">Attachment <span className="text-gray-400 font-normal">(optional)</span></label>
+          <div className="flex flex-col items-center justify-center rounded-xl border-2 border-dashed border-gray-200 bg-gray-50 p-8 transition-all hover:border-blue-300 hover:bg-blue-50/30 cursor-pointer">
+            <input type="file" id="file-upload" className="hidden" onChange={onFileChange} />
+            <label htmlFor="file-upload" className="flex cursor-pointer flex-col items-center gap-3 text-center">
+              <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-blue-50 text-blue-600">
+                {file ? <Lock className="h-5 w-5" /> : <FileUp className="h-5 w-5" />}
+              </div>
+              <div>
+                <p className="text-sm font-semibold text-gray-700">{file ? file.name : "Click to attach a file"}</p>
+                <p className="text-xs text-gray-400">{file ? `${(file.size / 1024 / 1024).toFixed(2)} MB` : "Any file type supported"}</p>
+              </div>
+            </label>
           </div>
         </div>
 
-        <button
-          type="submit"
-          disabled={isUploading}
-          className="premium-button flex w-full items-center justify-center gap-2 py-4"
-        >
+        {/* Security note */}
+        <div className="flex items-start gap-3 rounded-xl border border-blue-100 bg-blue-50 p-4">
+          <ShieldCheck className="h-4 w-4 text-blue-600 shrink-0 mt-0.5" />
+          <p className="text-xs text-blue-700">Your message and files are encrypted with AES-256 in your browser. We never see your plaintext data.</p>
+        </div>
+
+        <button type="submit" disabled={isUploading} className="w-full flex items-center justify-center gap-2 rounded-xl bg-blue-600 py-3.5 text-sm font-bold text-white hover:bg-blue-700 transition-colors disabled:opacity-60">
           {isUploading ? (
-            <>
-              <Loader2 className="h-5 w-5 animate-spin" />
-              <span>{uploadProgress}% Securely Uploading...</span>
-            </>
+            <><Loader2 className="h-4 w-4 animate-spin" />{uploadProgress}% Uploading...</>
           ) : (
-            <>
-              <ShieldCheck className="h-5 w-5" />
-              <span>Send Secure Message</span>
-              <ArrowRight className="h-4 w-4" />
-            </>
+            <><ShieldCheck className="h-4 w-4" />Send Secure Message<ArrowRight className="h-4 w-4" /></>
           )}
         </button>
       </form>

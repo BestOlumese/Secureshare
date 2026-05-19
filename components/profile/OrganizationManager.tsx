@@ -1,20 +1,12 @@
 "use client";
 
 import { useState } from "react";
-import { 
-  Users, 
-  Mail, 
-  UserPlus, 
-  Shield, 
-  X, 
-  Loader2, 
-  Trash2, 
-  ShieldAlert,
-  ChevronDown,
-  UserCheck,
-  Building2
+import {
+  Users, Mail, UserPlus, Shield, X, Loader2, Trash2, ShieldAlert, Building2, Crown,
 } from "lucide-react";
-import { inviteUserToOrg, revokeInvitation, updateMemberRole, removeMember, updateOrganization } from "@/app/actions/org-actions";
+import {
+  inviteUserToOrg, revokeInvitation, updateMemberRole, removeMember, updateOrganization,
+} from "@/app/actions/org-actions";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 
@@ -24,6 +16,20 @@ interface OrganizationManagerProps {
   invitations: any[];
 }
 
+const ROLE_STYLES: Record<string, string> = {
+  OWNER: "bg-amber-50 text-amber-600 border-amber-200",
+  ADMIN: "bg-blue-50 text-blue-600 border-blue-200",
+  USER: "bg-gray-100 text-gray-500 border-gray-200",
+};
+
+const AVATAR_PALETTE = [
+  "bg-blue-500", "bg-violet-500", "bg-emerald-500",
+  "bg-amber-500", "bg-rose-500", "bg-cyan-500",
+];
+function getAvatarColor(str: string) {
+  return AVATAR_PALETTE[str.toLowerCase().charCodeAt(0) % AVATAR_PALETTE.length];
+}
+
 export default function OrganizationManager({ user, members, invitations }: OrganizationManagerProps) {
   const [inviteEmail, setInviteEmail] = useState("");
   const [inviteRole, setInviteRole] = useState<"ADMIN" | "USER">("USER");
@@ -31,14 +37,21 @@ export default function OrganizationManager({ user, members, invitations }: Orga
   const [orgName, setOrgName] = useState(user.organization?.name || "");
   const [isUpdatingOrg, setIsUpdatingOrg] = useState(false);
 
+  const isAdminOrOwner = user.role === "OWNER" || user.role === "ADMIN";
+  const pendingInvitations = invitations.filter((i) => i.status === "PENDING");
+
+  const inputClass =
+    "flex-1 rounded-xl border border-gray-200 bg-gray-50 py-2.5 px-4 text-sm text-gray-900 placeholder:text-gray-400 focus:border-blue-400 focus:bg-white focus:outline-none focus:ring-2 focus:ring-blue-500/10 transition-all";
+  const btnPrimary =
+    "flex items-center justify-center gap-2 rounded-xl bg-blue-600 px-5 py-2.5 text-sm font-bold text-white hover:bg-blue-700 transition-colors disabled:opacity-60 whitespace-nowrap";
+
   const handleUpdateOrg = async (e: React.FormEvent) => {
     e.preventDefault();
     if (orgName === user.organization?.name) return;
-
     setIsUpdatingOrg(true);
     try {
       await updateOrganization({ name: orgName });
-      toast.success("Organization renamed successfully!");
+      toast.success("Organization renamed!");
       window.location.reload();
     } catch (err: any) {
       toast.error(err.message);
@@ -50,11 +63,10 @@ export default function OrganizationManager({ user, members, invitations }: Orga
   const handleInvite = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!inviteEmail) return;
-
     setIsInviting(true);
     try {
       await inviteUserToOrg(inviteEmail, inviteRole);
-      toast.success("Invitation sent successfully!");
+      toast.success("Invitation sent!");
       setInviteEmail("");
       window.location.reload();
     } catch (err: any) {
@@ -85,7 +97,7 @@ export default function OrganizationManager({ user, members, invitations }: Orga
   };
 
   const handleRemove = async (targetUserId: string) => {
-    if (!confirm("Are you sure you want to remove this member?")) return;
+    if (!confirm("Remove this member from the organization?")) return;
     try {
       await removeMember(targetUserId);
       toast.success("Member removed.");
@@ -95,169 +107,186 @@ export default function OrganizationManager({ user, members, invitations }: Orga
     }
   };
 
-  const isAdminOrOwner = user.role === "OWNER" || user.role === "ADMIN";
-
   return (
-    <div className="space-y-8 mt-12">
-      <div className="flex items-center gap-3 mb-6">
-        <div className="p-2 rounded-lg bg-sky-500/10 text-sky-400 border border-sky-500/20">
-          <Shield className="h-5 w-5" />
-        </div>
-        <h3 className="text-xl font-bold uppercase tracking-tight">Organization Control</h3>
-      </div>
+    <div className="space-y-5">
 
-      {isAdminOrOwner && (
+      {!isAdminOrOwner ? (
+        <div className="bg-white rounded-2xl border border-gray-200 p-6">
+          <p className="text-sm text-gray-500">
+            You are a member of{" "}
+            <span className="font-semibold text-blue-600">{user.organization?.name}</span>.
+            Only administrators can manage this organization.
+          </p>
+        </div>
+      ) : (
         <>
-          {/* Edit Org Name */}
-          <section className="glass-card p-6 border-sky-500/10">
-            <h4 className="text-sm font-bold text-slate-400 uppercase tracking-widest mb-4 flex items-center gap-2">
-              <Building2 className="h-4 w-4" />
-              Edit Organization Information
+          {/* Org Name */}
+          <section className="bg-white rounded-2xl border border-gray-200 p-5">
+            <h4 className="text-xs font-bold text-gray-400 uppercase tracking-widest mb-4 flex items-center gap-2">
+              <Building2 className="h-3.5 w-3.5" />
+              Organization Name
             </h4>
-            <form onSubmit={handleUpdateOrg} className="flex flex-col md:flex-row gap-3">
+            <form onSubmit={handleUpdateOrg} className="flex gap-3">
               <input
                 type="text"
                 value={orgName}
                 onChange={(e) => setOrgName(e.target.value)}
                 placeholder="Organization Name"
-                className="flex-1 rounded-xl border border-slate-800 bg-slate-900/50 py-3 px-4 text-sm text-white focus:border-sky-500 focus:outline-none focus:ring-1 focus:ring-sky-500"
+                className={inputClass}
               />
               <button
                 type="submit"
                 disabled={isUpdatingOrg || orgName === user.organization?.name}
-                className="premium-button px-6 py-3 flex items-center justify-center gap-2"
+                className={btnPrimary}
               >
-                {isUpdatingOrg ? <Loader2 className="h-4 w-4 animate-spin" /> : "Save Changes"}
+                {isUpdatingOrg ? <Loader2 className="h-4 w-4 animate-spin" /> : "Save"}
               </button>
             </form>
           </section>
 
           {/* Invite Member */}
-          <section className="glass-card p-6 border-sky-500/10">
-            <h4 className="text-sm font-bold text-slate-400 uppercase tracking-widest mb-4 flex items-center gap-2">
-              <UserPlus className="h-4 w-4" />
-              Invite Team Member
+          <section className="bg-white rounded-2xl border border-gray-200 p-5">
+            <h4 className="text-xs font-bold text-gray-400 uppercase tracking-widest mb-4 flex items-center gap-2">
+              <UserPlus className="h-3.5 w-3.5" />
+              Invite Member
             </h4>
-            <form onSubmit={handleInvite} className="flex flex-col md:flex-row gap-3">
+            <form onSubmit={handleInvite} className="flex flex-col sm:flex-row gap-3">
               <input
                 type="email"
                 value={inviteEmail}
                 onChange={(e) => setInviteEmail(e.target.value)}
                 placeholder="colleague@company.com"
-                className="flex-1 rounded-xl border border-slate-800 bg-slate-900/50 py-3 px-4 text-sm text-white focus:border-sky-500 focus:outline-none focus:ring-1 focus:ring-sky-500"
+                className={inputClass}
               />
               <select
                 value={inviteRole}
                 onChange={(e) => setInviteRole(e.target.value as any)}
-                className="rounded-xl border border-slate-800 bg-slate-900/50 py-3 px-4 text-sm text-slate-400 focus:border-sky-500 focus:outline-none"
+                className="rounded-xl border border-gray-200 bg-gray-50 py-2.5 px-3 text-sm text-gray-700 focus:border-blue-400 focus:outline-none focus:bg-white transition-all"
               >
-                <option value="USER">User (Receiver)</option>
+                <option value="USER">User</option>
                 <option value="ADMIN">Admin</option>
               </select>
-              <button
-                type="submit"
-                disabled={isInviting}
-                className="premium-button px-6 py-3 flex items-center justify-center gap-2"
-              >
-                {isInviting ? <Loader2 className="h-4 w-4 animate-spin" /> : "Send Invite"}
+              <button type="submit" disabled={isInviting} className={btnPrimary}>
+                {isInviting ? <Loader2 className="h-4 w-4 animate-spin" /> : (
+                  <><UserPlus className="h-4 w-4" />Invite</>
+                )}
               </button>
             </form>
           </section>
         </>
       )}
 
-      {!isAdminOrOwner && (
-        <section className="p-6 rounded-2xl border border-slate-800 bg-slate-900/30">
-          <p className="text-xs font-bold text-slate-500 italic">
-            You are a member of <span className="text-sky-400">@{user.organization?.name}</span>. Only administrators can manage invitations or rename the organization.
-          </p>
-        </section>
-      )}
+      {/* Members & Invitations */}
+      <div className="grid gap-5 md:grid-cols-2">
 
-      {/* Members & Invitations Grid */}
-      <div className="grid gap-6 md:grid-cols-2">
-        {/* Active Members */}
-        <section className="glass-card p-6">
-          <h4 className="text-xs font-bold text-slate-500 uppercase tracking-widest mb-4 flex items-center gap-2">
-            <Users className="h-3 w-3" />
-            Active Members ({members.length})
-          </h4>
-          <div className="space-y-3">
+        {/* Members */}
+        <section className="bg-white rounded-2xl border border-gray-200 p-5">
+          <div className="flex items-center justify-between mb-4">
+            <h4 className="text-xs font-bold text-gray-400 uppercase tracking-widest flex items-center gap-2">
+              <Users className="h-3.5 w-3.5" />
+              Members
+            </h4>
+            <span className="text-[10px] font-bold bg-gray-100 text-gray-500 px-2 py-0.5 rounded-full border border-gray-200">
+              {members.length}
+            </span>
+          </div>
+
+          <div className="space-y-2">
             {members.map((m) => (
-              <div key={m.id} className="flex items-center justify-between p-3 rounded-lg border border-slate-800/50 bg-slate-900/30">
-                <div className="flex items-center gap-3 overflow-hidden">
-                  <div className="h-8 w-8 rounded-lg bg-sky-500/10 text-sky-400 border border-sky-500/20 flex items-center justify-center text-[10px] font-black uppercase">
-                    {m.name?.charAt(0) || "U"}
+              <div
+                key={m.id}
+                className="flex items-center justify-between p-3 rounded-xl border border-gray-100 bg-gray-50 gap-2"
+              >
+                <div className="flex items-center gap-3 min-w-0">
+                  <div
+                    className={cn(
+                      "h-8 w-8 rounded-full flex items-center justify-center text-xs font-bold text-white shrink-0",
+                      getAvatarColor(m.name || m.email)
+                    )}
+                  >
+                    {(m.name || m.email).charAt(0).toUpperCase()}
                   </div>
-                  <div className="overflow-hidden">
-                    <p className="text-xs font-bold text-white truncate">{m.name}</p>
-                    <p className="text-[10px] text-slate-500 truncate">{m.email}</p>
+                  <div className="min-w-0">
+                    <p className="text-sm font-semibold text-gray-800 truncate">{m.name}</p>
+                    <p className="text-[10px] text-gray-400 truncate">{m.email}</p>
                   </div>
                 </div>
-                
-                <div className="flex items-center gap-2 shrink-0">
+
+                <div className="flex items-center gap-1.5 shrink-0">
                   <span className={cn(
-                    "text-[9px] font-black px-2 py-0.5 rounded uppercase tracking-tighter border",
-                    m.role === "OWNER" ? "bg-amber-500/10 text-amber-500 border-amber-500/20" :
-                    m.role === "ADMIN" ? "bg-sky-500/10 text-sky-500 border-sky-500/20" :
-                    "bg-slate-500/10 text-slate-500 border-slate-500/20"
+                    "flex items-center gap-1 text-[9px] font-black px-2 py-0.5 rounded-full uppercase tracking-widest border",
+                    ROLE_STYLES[m.role] || ROLE_STYLES.USER
                   )}>
+                    {m.role === "OWNER" && <Crown className="h-2.5 w-2.5" />}
+                    {m.role === "ADMIN" && <Shield className="h-2.5 w-2.5" />}
                     {m.role}
                   </span>
-                  
-                  {user.id !== m.id && (m.role !== "OWNER") && (
-                    <div className="flex items-center gap-1">
-                      {/* Only Owners can manage Admins, Admins manage Users */}
-                      {((user.role === "OWNER") || (user.role === "ADMIN" && m.role === "USER")) && (
-                        <>
-                          <button 
-                            onClick={() => handleUpdateRole(m.id, m.role === "ADMIN" ? "USER" : "ADMIN")}
-                            className="p-1.5 rounded-md hover:bg-slate-800 text-slate-500 hover:text-sky-400 transition-colors"
-                            title="Toggle Role"
-                          >
-                            <ShieldAlert className="h-3 w-3" />
-                          </button>
-                          <button 
-                            onClick={() => handleRemove(m.id)}
-                            className="p-1.5 rounded-md hover:bg-slate-800 text-slate-500 hover:text-red-400 transition-colors"
-                            title="Remove Member"
-                          >
-                            <Trash2 className="h-3 w-3" />
-                          </button>
-                        </>
-                      )}
-                    </div>
-                  )}
+
+                  {user.id !== m.id &&
+                    m.role !== "OWNER" &&
+                    (user.role === "OWNER" || (user.role === "ADMIN" && m.role === "USER")) && (
+                      <div className="flex gap-0.5">
+                        <button
+                          onClick={() => handleUpdateRole(m.id, m.role === "ADMIN" ? "USER" : "ADMIN")}
+                          title="Toggle Role"
+                          className="p-1.5 rounded-lg text-gray-300 hover:text-blue-600 hover:bg-blue-50 transition-colors"
+                        >
+                          <ShieldAlert className="h-3.5 w-3.5" />
+                        </button>
+                        <button
+                          onClick={() => handleRemove(m.id)}
+                          title="Remove"
+                          className="p-1.5 rounded-lg text-gray-300 hover:text-red-500 hover:bg-red-50 transition-colors"
+                        >
+                          <Trash2 className="h-3.5 w-3.5" />
+                        </button>
+                      </div>
+                    )}
                 </div>
               </div>
             ))}
           </div>
         </section>
 
-        {/* Pending Invites */}
-        <section className="glass-card p-6">
-          <h4 className="text-xs font-bold text-slate-500 uppercase tracking-widest mb-4 flex items-center gap-2">
-            <Mail className="h-3 w-3" />
-            Pending Invitations ({invitations.filter(i => i.status === "PENDING").length})
-          </h4>
-          <div className="space-y-3">
-            {invitations.filter(i => i.status === "PENDING").map((inv) => (
-              <div key={inv.id} className="flex items-center justify-between p-3 rounded-lg border border-slate-800/50 bg-slate-900/30">
-                <div className="overflow-hidden mr-2">
-                  <p className="text-xs font-bold text-white truncate">{inv.email}</p>
-                  <p className="text-[10px] text-slate-500 uppercase tracking-tighter">{inv.role} • {new Date(inv.createdAt).toLocaleDateString()}</p>
+        {/* Pending Invitations */}
+        <section className="bg-white rounded-2xl border border-gray-200 p-5">
+          <div className="flex items-center justify-between mb-4">
+            <h4 className="text-xs font-bold text-gray-400 uppercase tracking-widest flex items-center gap-2">
+              <Mail className="h-3.5 w-3.5" />
+              Pending Invitations
+            </h4>
+            <span className="text-[10px] font-bold bg-gray-100 text-gray-500 px-2 py-0.5 rounded-full border border-gray-200">
+              {pendingInvitations.length}
+            </span>
+          </div>
+
+          <div className="space-y-2">
+            {pendingInvitations.map((inv) => (
+              <div
+                key={inv.id}
+                className="flex items-center justify-between p-3 rounded-xl border border-gray-100 bg-gray-50 gap-2"
+              >
+                <div className="min-w-0 flex-1">
+                  <p className="text-sm font-semibold text-gray-800 truncate">{inv.email}</p>
+                  <p className="text-[10px] text-gray-400 uppercase tracking-widest mt-0.5">
+                    {inv.role} · {new Date(inv.createdAt).toLocaleDateString()}
+                  </p>
                 </div>
-                <button 
+                <button
                   onClick={() => handleRevoke(inv.id)}
-                  className="shrink-0 p-1.5 rounded-md hover:bg-slate-800 text-slate-500 hover:text-red-400 transition-colors"
-                  title="Revoke Invite"
+                  title="Revoke"
+                  className="p-1.5 rounded-lg text-gray-300 hover:text-red-500 hover:bg-red-50 transition-colors shrink-0"
                 >
-                  <X className="h-3 w-3" />
+                  <X className="h-3.5 w-3.5" />
                 </button>
               </div>
             ))}
-            {invitations.filter(i => i.status === "PENDING").length === 0 && (
-              <p className="text-[10px] text-slate-600 italic">No pending invitations.</p>
+
+            {pendingInvitations.length === 0 && (
+              <div className="flex flex-col items-center justify-center py-8 text-center">
+                <Mail className="h-6 w-6 text-gray-200 mb-2" />
+                <p className="text-sm text-gray-400">No pending invitations.</p>
+              </div>
             )}
           </div>
         </section>
