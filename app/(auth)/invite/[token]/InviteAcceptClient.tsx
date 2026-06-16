@@ -22,15 +22,22 @@ export default function InviteAcceptClient({ invitation }: InviteAcceptClientPro
   async function handleAccept() {
     setIsAccepting(true);
     try {
-      await acceptInvitation(invitation.id);
-      toast.success(`You've joined ${invitation.orgName}!`);
-      router.push("/dashboard");
-    } catch (e: any) {
-      toast.error(e.message || "Failed to accept invitation.");
-      // If not signed in, redirect to login with return URL
-      if (e.message?.includes("signed in")) {
-        router.push(`/login?redirect=/invite/${invitation.id}`);
+      const result = await acceptInvitation(invitation.id);
+
+      if (!result.success) {
+        if (result.needsLogin) {
+          router.push(`/login?redirect=/invite/${invitation.id}`);
+          return;
+        }
+        toast.error(result.error || "Failed to accept invitation.");
+        setIsAccepting(false);
+        return;
       }
+
+      toast.success(`You've joined ${result.orgName || invitation.orgName}!`);
+      router.push("/dashboard");
+    } catch {
+      toast.error("Something went wrong. Please try again.");
       setIsAccepting(false);
     }
   }

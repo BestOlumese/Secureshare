@@ -287,20 +287,24 @@ export async function getInvitationById(invitationId: string) {
 /**
  * Accepts a pending invitation for the currently signed-in user.
  */
-export async function acceptInvitation(invitationId: string) {
+export async function acceptInvitation(
+  invitationId: string
+): Promise<{ success: boolean; error?: string; needsLogin?: boolean; orgName?: string }> {
   const session = await auth.api.getSession({ headers: await headers() });
-  if (!session) throw new Error("You must be signed in to accept an invitation.");
+  if (!session) {
+    return { success: false, needsLogin: true, error: "You must be signed in to accept an invitation." };
+  }
 
   const invitation = await prisma.invitation.findUnique({
     where: { id: invitationId },
     include: { organization: { select: { name: true } } },
   });
 
-  if (!invitation) throw new Error("Invitation not found.");
-  if (invitation.status !== "PENDING") throw new Error("This invitation is no longer valid.");
-  if (invitation.expiresAt < new Date()) throw new Error("This invitation has expired.");
+  if (!invitation) return { success: false, error: "Invitation not found." };
+  if (invitation.status !== "PENDING") return { success: false, error: "This invitation is no longer valid." };
+  if (invitation.expiresAt < new Date()) return { success: false, error: "This invitation has expired." };
   if (invitation.email.toLowerCase() !== session.user.email.toLowerCase()) {
-    throw new Error("This invitation was sent to a different email address.");
+    return { success: false, error: "This invitation was sent to a different email address." };
   }
 
   await prisma.$transaction([
