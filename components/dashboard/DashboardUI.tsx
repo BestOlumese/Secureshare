@@ -65,6 +65,7 @@ export default function DashboardUI({
   const [isComposeOpen, setIsComposeOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [replyTarget, setReplyTarget] = useState<Message | null>(null);
+  const [decryptedSubjects, setDecryptedSubjects] = useState<Record<string, string>>({});
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [bulkSelectedIds, setBulkSelectedIds] = useState<Set<string>>(new Set());
   const [isBulkActing, setIsBulkActing] = useState(false);
@@ -502,6 +503,7 @@ export default function DashboardUI({
                   onUnarchived={handleUnarchived}
                   onReply={view !== "vault" && view !== "sent" ? handleReply : undefined}
                   onForward={view !== "vault" ? handleForward : undefined}
+                  onSubjectDecrypted={(s) => setDecryptedSubjects(prev => ({ ...prev, [selectedMessage.id]: s }))}
                   isSentView={view === "sent"}
                   isVaultView={isVaultView}
                   isArchivedView={view === "archived"}
@@ -581,9 +583,9 @@ export default function DashboardUI({
         replyTo={replyTarget ? {
           email: replyTarget.sender.email,
           org: null,
-          subject: replyTarget.subject || "",
+          subject: decryptedSubjects[replyTarget.id] || "(Encrypted Message)",
         } : undefined}
-        forwardSubject={forwardTarget?.subject || undefined}
+        forwardSubject={forwardTarget ? (decryptedSubjects[forwardTarget.id] || "(Encrypted Message)") : undefined}
       />
 
       {/* Keyboard shortcut confirmation modal */}

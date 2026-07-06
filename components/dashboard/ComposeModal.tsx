@@ -249,10 +249,11 @@ export default function ComposeModal({ isOpen, onClose, user, replyTo, forwardSu
         setProgress(30);
         const aesKey = await generateAesKey();
 
-        // 3. Encrypt the Message Content
+        // 3. Encrypt subject and message content
+        setProgress(40);
+        const encryptedSubject = await encryptString(data.subject, aesKey);
         let encryptedContent = undefined;
         if (data.content) {
-          setProgress(40);
           encryptedContent = await encryptString(data.content, aesKey);
         }
 
@@ -322,7 +323,7 @@ export default function ComposeModal({ isOpen, onClose, user, replyTo, forwardSu
           ? new Date(Date.now() + expiryDays * 24 * 60 * 60 * 1000)
           : undefined;
         await sendSecureMessage({
-          subject: data.subject,
+          subject: encryptedSubject,
           content: encryptedContent,
           expiryDate,
           messageKeyShares: keyShares,

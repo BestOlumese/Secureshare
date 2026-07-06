@@ -191,7 +191,7 @@ export default function MessageList({
                   isSelected ? "text-blue-600 font-medium" : isUnread ? "text-gray-900 font-bold" : "text-gray-700 font-medium"
                 )}
               >
-                {message.subject || "(No Subject)"}
+                Encrypted Message
               </p>
 
               <div className="flex items-center justify-between gap-2">

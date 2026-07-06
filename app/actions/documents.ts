@@ -72,14 +72,7 @@ export async function sendSecureMessage(data: {
   if (!session) throw new Error("Unauthorized");
   const userId = session.user.id;
 
-  // Rate limit: max 20 messages per hour per user
-  const oneHourAgo = new Date(Date.now() - 60 * 60 * 1000);
-  const recentCount = await prisma.message.count({
-    where: { senderId: userId, createdAt: { gte: oneHourAgo } },
-  });
-  if (recentCount >= 20) {
-    throw new Error("Rate limit reached. You can send up to 20 messages per hour.");
-  }
+
 
   // Fetch sender's organization
   const sender = await prisma.user.findUnique({
@@ -197,7 +190,7 @@ export async function sendSecureMessage(data: {
 
   if (recipientUsers.length > 0) {
     const appUrl = process.env.BETTER_AUTH_URL || "http://localhost:3000";
-    const emailSubject = data.subject ? `"${data.subject}"` : "a secure message";
+    const emailSubject = "a secure message";
     const attachmentNote = data.attachments.length > 0
       ? `<p style="color:#64748b;font-size:14px;">It includes <strong>${data.attachments.length} encrypted attachment${data.attachments.length > 1 ? "s" : ""}</strong>.</p>`
       : "";

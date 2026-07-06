@@ -24,6 +24,7 @@ interface MessageViewProps {
   onUnarchived?: (messageId: string) => void;
   onReply?: (message: Message) => void;
   onForward?: (message: Message) => void;
+  onSubjectDecrypted?: (subject: string) => void;
   isVaultView?: boolean;
   isArchivedView?: boolean;
   isSentView?: boolean;
@@ -58,11 +59,12 @@ function fileIcon(contentType: string | null) {
   return <File className="h-4 w-4 sm:h-5 sm:w-5" />;
 }
 
-export default function MessageView({ message, onClose, onDeleted, onArchived, onUnarchived, onReply, onForward, isVaultView = false, isArchivedView = false, isSentView = false }: MessageViewProps) {
+export default function MessageView({ message, onClose, onDeleted, onArchived, onUnarchived, onReply, onForward, onSubjectDecrypted, isVaultView = false, isArchivedView = false, isSentView = false }: MessageViewProps) {
   const [isDeleting, setIsDeleting] = useState(false);
   const [isArchiving, setIsArchiving] = useState(false);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [showArchiveConfirm, setShowArchiveConfirm] = useState(false);
+  const [decryptedSubject, setDecryptedSubject] = useState<string | null>(null);
 
   async function handleDelete() {
     setIsDeleting(true);
@@ -187,8 +189,15 @@ export default function MessageView({ message, onClose, onDeleted, onArchived, o
 
           {/* Subject + Date */}
           <div>
-            <h1 className="text-xl sm:text-2xl font-bold text-gray-900 leading-tight mb-1">
-              {message.subject || "(No Subject)"}
+            <h1 className="text-xl sm:text-2xl font-bold leading-tight mb-1 flex items-center gap-2">
+              {decryptedSubject ? (
+                <span className="text-gray-900">{decryptedSubject}</span>
+              ) : (
+                <span className="flex items-center gap-2 text-gray-400 italic">
+                  <Lock className="h-4 w-4 shrink-0" />
+                  Encrypted Subject
+                </span>
+              )}
             </h1>
             <p className="text-xs text-gray-400 font-medium">
               {format(new Date(message.createdAt), "EEEE, MMMM do yyyy 'at' HH:mm")}
@@ -284,7 +293,13 @@ export default function MessageView({ message, onClose, onDeleted, onArchived, o
               E2EE
             </div>
             <div className="prose prose-slate max-w-none pt-2">
-              <DecryptMessageText messageId={message.id} />
+              <DecryptMessageText
+                messageId={message.id}
+                onSubjectDecrypted={(s) => {
+                  setDecryptedSubject(s);
+                  onSubjectDecrypted?.(s);
+                }}
+              />
             </div>
           </div>
 

@@ -11,12 +11,13 @@ import { toast } from "sonner";
 
 interface DecryptMessageTextProps {
   messageId: string;
+  onSubjectDecrypted?: (subject: string) => void;
 }
 
 // Org key decryption mode: "personal" | "org"
 type DecryptMode = "personal" | "org";
 
-export default function DecryptMessageText({ messageId }: DecryptMessageTextProps) {
+export default function DecryptMessageText({ messageId, onSubjectDecrypted }: DecryptMessageTextProps) {
   const [isDecrypting, setIsDecrypting] = useState(false);
   const [showPasswordPrompt, setShowPasswordPrompt] = useState(false);
   const [password, setPassword] = useState("");
@@ -33,7 +34,6 @@ export default function DecryptMessageText({ messageId }: DecryptMessageTextProp
       if (!cachedMeta) setCachedMeta(meta);
 
       const { content, encryptedAesKey, orgEncryptedAesKey } = meta;
-      if (!content) return "Message is empty.";
 
       if (encryptedAesKey) {
         // Personal recipient path — use personal private key
@@ -45,7 +45,14 @@ export default function DecryptMessageText({ messageId }: DecryptMessageTextProp
           throw new Error("RECOVERY_REQUIRED");
         }
         const aesKey = await unwrapAesKey(encryptedAesKey, privateKeyBuffer as ArrayBuffer);
-        setDecryptedText(await decryptString(content, aesKey));
+        setDecryptedText(content ? await decryptString(content, aesKey) : "Message is empty.");
+        if (meta.subject) {
+          try {
+            onSubjectDecrypted?.(await decryptString(meta.subject, aesKey));
+          } catch {
+            onSubjectDecrypted?.(meta.subject); // fallback for old plaintext subjects
+          }
+        }
         return "Message decrypted successfully!";
       }
 
@@ -87,8 +94,14 @@ export default function DecryptMessageText({ messageId }: DecryptMessageTextProp
         const meta = cachedMeta || await getMessageMetadata(messageId);
         if (!meta.orgEncryptedAesKey) throw new Error("No org key share for this message.");
         const aesKey = await unwrapAesKey(meta.orgEncryptedAesKey, recoveredKeyBuffer);
-        const plainText = await decryptString(meta.content, aesKey);
-        setDecryptedText(plainText);
+        setDecryptedText(meta.content ? await decryptString(meta.content, aesKey) : "Message is empty.");
+        if (meta.subject) {
+          try {
+            onSubjectDecrypted?.(await decryptString(meta.subject, aesKey));
+          } catch {
+            onSubjectDecrypted?.(meta.subject);
+          }
+        }
         return "Message decrypted via Org Vault!";
       } else {
         const syncInfo: any = await getUserKeySyncInfo();
