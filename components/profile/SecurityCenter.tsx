@@ -2,9 +2,8 @@
 
 import { useState, useEffect } from "react";
 import {
-  ShieldAlert, Key, Download, Loader2, Lock, Eye, EyeOff,
-  CheckCircle2, RotateCcw, ChevronRight, Building2, ShieldCheck, AlertTriangle,
-  Monitor, Smartphone, Globe, LogOut, RefreshCw,
+  Download, Loader2, Lock, Eye, EyeOff, AlertTriangle,
+  Monitor, Smartphone, Globe, RefreshCw,
 } from "lucide-react";
 import { decryptPrivateKeyFromSync, exportPrivateKeyForManualBackup, encryptPrivateKeyForSync } from "@/lib/crypto-client";
 import { toast } from "sonner";
@@ -13,6 +12,8 @@ import { saveOrgKeys } from "@/app/actions/org-actions";
 import { getSessions, revokeSession } from "@/app/actions/documents";
 import { cn } from "@/lib/utils";
 import { format } from "date-fns";
+import type { CurrentUser } from "@/lib/types";
+import { getErrorMessage } from "@/lib/utils";
 
 type SessionEntry = {
   id: string;
@@ -33,7 +34,7 @@ function parseDevice(ua: string | null) {
 }
 
 interface SecurityCenterProps {
-  user: any;
+  user: CurrentUser;
 }
 
 export default function SecurityCenter({ user }: SecurityCenterProps) {
@@ -61,9 +62,9 @@ export default function SecurityCenter({ user }: SecurityCenterProps) {
     try {
       await revokeSession(sessionId);
       setSessions((prev) => prev.filter((s) => s.id !== sessionId));
-      toast.success("Session revoked.");
+      toast.success("Signed out");
     } catch {
-      toast.error("Failed to revoke session.");
+      toast.error("Couldn't sign that device out.");
     } finally {
       setRevokingId(null);
     }
@@ -71,7 +72,7 @@ export default function SecurityCenter({ user }: SecurityCenterProps) {
 
   const handleGenerateOrgKeys = async () => {
     if (!orgPassword || orgPassword.length < 8) {
-      toast.error("Org password must be at least 8 characters.");
+      toast.error("Org password needs at least 8 characters.");
       return;
     }
     setIsGeneratingOrgKeys(true);
@@ -84,27 +85,27 @@ export default function SecurityCenter({ user }: SecurityCenterProps) {
       const publicKeyBuffer = await window.crypto.subtle.exportKey("spki", keyPair.publicKey);
       const privateKeyBuffer = await window.crypto.subtle.exportKey("pkcs8", keyPair.privateKey);
       const publicKeyBase64 = btoa(String.fromCharCode(...new Uint8Array(publicKeyBuffer)));
-      const { encryptedKey, salt, iv } = await encryptPrivateKeyForSync(privateKeyBuffer, orgPassword);
-      await saveOrgKeys({ publicKey: publicKeyBase64, encryptedPrivateKey: encryptedKey, salt, iv });
-      toast.success("Organization vault keys generated and saved!");
+      const { encryptedKey, salt, iv, iterations } = await encryptPrivateKeyForSync(privateKeyBuffer, orgPassword);
+      await saveOrgKeys({ publicKey: publicKeyBase64, encryptedPrivateKey: encryptedKey, salt, iv, iterations });
+      toast.success("Org key created");
       setOrgPassword("");
       setShowRegenConfirm(false);
-    } catch (err: any) {
-      toast.error(err.message || "Failed to generate org keys.");
+    } catch (err: unknown) {
+      toast.error(getErrorMessage(err, "Couldn't create the org key."));
     } finally {
       setIsGeneratingOrgKeys(false);
     }
   };
 
   const handleExportPrivateKey = async () => {
-    if (!password) { toast.error("Please enter your Master Password."); return; }
+    if (!password) { toast.error("Enter your master password."); return; }
     setIsExporting(true);
     try {
       if (!user.encryptedPrivateKey || !user.privateKeySalt || !user.privateKeyIV) {
         throw new Error("No encrypted key found on server.");
       }
       const buffer = await decryptPrivateKeyFromSync(
-        user.encryptedPrivateKey, password, user.privateKeySalt, user.privateKeyIV
+        user.encryptedPrivateKey, password, user.privateKeySalt, user.privateKeyIV, user.kdfIterations
       );
       const base64Key = exportPrivateKeyForManualBackup(buffer);
       const blob = new Blob([base64Key], { type: "text/plain" });
@@ -115,249 +116,211 @@ export default function SecurityCenter({ user }: SecurityCenterProps) {
       document.body.appendChild(a);
       a.click();
       document.body.removeChild(a);
-      toast.success("Private key exported successfully!");
+      toast.success("Key downloaded");
       setPassword("");
     } catch {
-      toast.error("Invalid Master Password or decryption failed.");
+      toast.error("Wrong password.");
     } finally {
       setIsExporting(false);
     }
   };
 
   return (
-    <section className="bg-white rounded-2xl border border-gray-200 p-6 h-full flex flex-col gap-5">
+    <div className="space-y-10">
 
-      {/* Header */}
-      <div className="flex items-center gap-3">
-        <div className="p-2 rounded-xl bg-blue-50 text-blue-600">
-          <ShieldAlert className="h-5 w-5" />
-        </div>
-        <div>
-          <h3 className="text-sm font-bold text-gray-900">Security Center</h3>
-          <p className="text-xs text-gray-400">Manage your zero-knowledge encryption keys.</p>
-        </div>
-      </div>
+      {/* ---------------- Password ---------------- */}
+      <section>
+        <h2 className="text-sm font-medium text-gray-900 mb-1">Password</h2>
+        <p className="text-sm text-gray-500 mb-4">
+          Your master password unlocks your key. We never receive it, so we can&apos;t reset it for you.
+        </p>
 
-      {/* Unlock vault */}
-      <div>
-        <label className="block text-xs font-bold text-gray-400 uppercase tracking-widest mb-2">
-          Unlock Vault
-        </label>
-        <div className="relative">
-          <Lock className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400" />
-          <input
-            type={showPassword ? "text" : "password"}
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            placeholder="Master Password"
-            className="w-full rounded-xl border border-gray-200 bg-gray-50 py-2.5 pl-10 pr-10 text-sm text-gray-900 focus:border-blue-400 focus:outline-none focus:ring-2 focus:ring-blue-500/10 transition-all"
-          />
+        <div className="rounded-xl border border-gray-200 bg-white divide-y divide-gray-100">
+          <div className="flex items-center justify-between gap-4 p-4">
+            <div className="min-w-0">
+              <p className="text-sm text-gray-900">Reset your password</p>
+              <p className="text-sm text-gray-500">Needs your recovery key</p>
+            </div>
+            <button
+              onClick={() => setIsResetModalOpen(true)}
+              className="shrink-0 rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-sm text-gray-700 hover:bg-gray-50 transition-colors"
+            >
+              Reset
+            </button>
+          </div>
+        </div>
+      </section>
+
+      {/* ---------------- Keys ---------------- */}
+      <section>
+        <h2 className="text-sm font-medium text-gray-900 mb-1">Keys</h2>
+        <p className="text-sm text-gray-500 mb-4">
+          Download a copy of your private key as a backup. Enter your password to unlock it first.
+        </p>
+
+        <div className="rounded-xl border border-gray-200 bg-white p-4 space-y-3">
+          <div className="relative">
+            <Lock className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400" />
+            <input
+              type={showPassword ? "text" : "password"}
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              placeholder="Master password"
+              className="w-full rounded-lg border border-gray-200 bg-gray-50 py-2.5 pl-10 pr-10 text-sm text-gray-900 focus:border-blue-400 focus:outline-none focus:ring-2 focus:ring-blue-500/10 transition-all"
+            />
+            <button
+              type="button"
+              onClick={() => setShowPassword(!showPassword)}
+              aria-label={showPassword ? "Hide password" : "Show password"}
+              className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-700"
+            >
+              {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+            </button>
+          </div>
+
           <button
-            type="button"
-            onClick={() => setShowPassword(!showPassword)}
-            className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-700"
+            onClick={handleExportPrivateKey}
+            disabled={isExporting || !password}
+            className="flex items-center gap-2 rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm text-gray-700 hover:bg-gray-50 transition-colors disabled:opacity-50"
           >
-            {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+            {isExporting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}
+            Export key
           </button>
-        </div>
-      </div>
 
-      {/* Action Buttons */}
-      <div className="space-y-2">
-        <button
-          onClick={handleExportPrivateKey}
-          disabled={isExporting || !password}
-          className="flex items-center justify-between w-full p-4 rounded-xl border border-gray-200 bg-white hover:border-blue-200 hover:bg-blue-50/40 transition-all group disabled:opacity-50"
-        >
-          <div className="flex items-center gap-3">
-            <div className="p-2 rounded-lg bg-gray-100 text-gray-500 group-hover:bg-blue-100 group-hover:text-blue-600 transition-colors">
-              <Key className="h-4 w-4" />
-            </div>
-            <div className="text-left">
-              <p className="text-sm font-bold text-gray-800">Export Private Key</p>
-              <p className="text-[10px] text-gray-400 uppercase tracking-widest">Manual Backup</p>
-            </div>
-          </div>
-          {isExporting
-            ? <Loader2 className="h-4 w-4 animate-spin text-blue-600" />
-            : <Download className="h-4 w-4 text-gray-300 group-hover:text-blue-600 transition-colors" />}
-        </button>
-
-        <button
-          onClick={() => setIsResetModalOpen(true)}
-          className="flex items-center justify-between w-full p-4 rounded-xl border border-gray-200 bg-white hover:border-orange-200 hover:bg-orange-50/40 transition-all group"
-        >
-          <div className="flex items-center gap-3">
-            <div className="p-2 rounded-lg bg-gray-100 text-gray-500 group-hover:bg-orange-100 group-hover:text-orange-500 transition-colors">
-              <RotateCcw className="h-4 w-4" />
-            </div>
-            <div className="text-left">
-              <p className="text-sm font-bold text-gray-800">Reset Master Password</p>
-              <p className="text-[10px] text-gray-400 uppercase tracking-widest">Requires Recovery Key</p>
-            </div>
-          </div>
-          <ChevronRight className="h-4 w-4 text-gray-300 group-hover:text-orange-500 transition-colors" />
-        </button>
-
-        <div className="flex items-start gap-2.5 p-3 rounded-xl border border-orange-100 bg-orange-50">
-          <AlertTriangle className="h-3.5 w-3.5 text-orange-500 shrink-0 mt-0.5" />
-          <p className="text-xs text-orange-600 leading-relaxed">
-            Anyone with your exported private key can decrypt your messages. Store it securely offline.
+          <p className="flex items-start gap-2 text-sm text-orange-700">
+            <AlertTriangle className="h-4 w-4 shrink-0 mt-0.5 text-orange-500" />
+            Anyone with this file can read your messages. Keep it offline.
           </p>
         </div>
-      </div>
+      </section>
 
-      {/* Org Vault Keys — owner only */}
+      {/* ---------------- Org key (owner only) ---------------- */}
       {user.role === "OWNER" && (
-        <div className="pt-4 border-t border-gray-100 space-y-3">
-          <div className="flex items-center gap-2">
-            <Building2 className="h-4 w-4 text-blue-600" />
-            <h4 className="text-sm font-bold text-gray-800 flex-1">Organization Vault</h4>
-            <span className="text-[9px] font-bold uppercase tracking-widest text-gray-400 bg-gray-100 px-2 py-0.5 rounded-full">
-              Owner Only
-            </span>
-          </div>
+        <section>
+          <h2 className="text-sm font-medium text-gray-900 mb-1">Organization key</h2>
+          <p className="text-sm text-gray-500 mb-4">
+            Lets admins open messages shared with the organization when the original recipient
+            isn&apos;t around. Every use is written to the audit log.
+          </p>
 
-          {user.organization?.publicKey && !showRegenConfirm ? (
-            <>
-              <div className="flex items-center gap-2 text-xs text-emerald-700 bg-emerald-50 border border-emerald-100 rounded-xl px-3 py-2.5">
-                <CheckCircle2 className="h-3.5 w-3.5 shrink-0 text-emerald-500" />
-                <span>Org vault keys active. Outgoing messages are org-encrypted.</span>
-              </div>
-              <p className="text-xs text-gray-400 leading-relaxed">
-                Share your <b className="text-gray-600">Org Security Password</b> with other admins so they can use org-vault decryption.
-              </p>
-              <button
-                onClick={() => setShowRegenConfirm(true)}
-                className="text-xs font-semibold text-red-500 hover:text-red-600 transition-colors"
-              >
-                Regenerate org keys (breaks access to old messages)
-              </button>
-            </>
-          ) : (
-            <>
-              {showRegenConfirm && (
-                <div className="flex items-start gap-2.5 p-3 rounded-xl border border-red-200 bg-red-50">
-                  <AlertTriangle className="h-3.5 w-3.5 text-red-500 shrink-0 mt-0.5" />
-                  <p className="text-xs text-red-600 leading-relaxed">
-                    Regenerating creates a new key pair. Old messages encrypted with the previous org key will{" "}
-                    <b>no longer</b> be decryptable via org vault. This cannot be undone.
-                  </p>
-                </div>
-              )}
-              {!showRegenConfirm && (
-                <p className="text-xs text-gray-500 leading-relaxed">
-                  Generate a shared RSA key pair for your org. Admins can decrypt messages via org vault even if the original recipient has left.
+          <div className="rounded-xl border border-gray-200 bg-white p-4 space-y-3">
+            {user.organization?.publicKey && !showRegenConfirm ? (
+              <>
+                <p className="text-sm text-gray-900">Set up.</p>
+                <p className="text-sm text-gray-500">
+                  Share the org password with your other admins so they can use it.
                 </p>
-              )}
-
-              <div className="relative">
-                <Lock className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400" />
-                <input
-                  type={showOrgPassword ? "text" : "password"}
-                  value={orgPassword}
-                  onChange={(e) => setOrgPassword(e.target.value)}
-                  placeholder="Org Security Password (min 8 chars)"
-                  className="w-full rounded-xl border border-gray-200 bg-gray-50 py-2.5 pl-10 pr-10 text-sm text-gray-900 focus:border-blue-400 focus:outline-none focus:ring-2 focus:ring-blue-500/10 transition-all"
-                />
                 <button
-                  type="button"
-                  onClick={() => setShowOrgPassword(!showOrgPassword)}
-                  className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-700"
+                  onClick={() => setShowRegenConfirm(true)}
+                  className="text-sm text-red-600 hover:text-red-700 transition-colors"
                 >
-                  {showOrgPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                  Replace the key
                 </button>
-              </div>
+              </>
+            ) : (
+              <>
+                {showRegenConfirm ? (
+                  <p className="flex items-start gap-2 text-sm text-red-700">
+                    <AlertTriangle className="h-4 w-4 shrink-0 mt-0.5 text-red-500" />
+                    Messages opened with the old key won&apos;t be reachable any more. This can&apos;t be undone.
+                  </p>
+                ) : (
+                  <p className="text-sm text-gray-500">
+                    Choose a password for it. It&apos;s separate from your own.
+                  </p>
+                )}
 
-              <div className="flex gap-2">
-                {showRegenConfirm && (
+                <div className="relative">
+                  <Lock className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400" />
+                  <input
+                    type={showOrgPassword ? "text" : "password"}
+                    value={orgPassword}
+                    onChange={(e) => setOrgPassword(e.target.value)}
+                    placeholder="Org password"
+                    className="w-full rounded-lg border border-gray-200 bg-gray-50 py-2.5 pl-10 pr-10 text-sm text-gray-900 focus:border-blue-400 focus:outline-none focus:ring-2 focus:ring-blue-500/10 transition-all"
+                  />
                   <button
                     type="button"
-                    onClick={() => { setShowRegenConfirm(false); setOrgPassword(""); }}
-                    className="flex-1 rounded-xl border border-gray-200 bg-white py-2.5 text-sm font-semibold text-gray-500 hover:bg-gray-50 transition-colors"
+                    onClick={() => setShowOrgPassword(!showOrgPassword)}
+                    aria-label={showOrgPassword ? "Hide password" : "Show password"}
+                    className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-700"
                   >
-                    Cancel
+                    {showOrgPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
                   </button>
-                )}
-                <button
-                  type="button"
-                  onClick={handleGenerateOrgKeys}
-                  disabled={isGeneratingOrgKeys || !orgPassword}
-                  className={cn(
-                    "flex flex-1 items-center justify-center gap-2 rounded-xl py-2.5 text-sm font-bold transition-all disabled:opacity-50",
-                    showRegenConfirm
-                      ? "border border-red-200 bg-red-50 text-red-600 hover:bg-red-500 hover:text-white hover:border-red-500"
-                      : "border border-blue-200 bg-blue-50 text-blue-600 hover:bg-blue-600 hover:text-white hover:border-blue-600"
+                </div>
+
+                <div className="flex gap-2">
+                  {showRegenConfirm && (
+                    <button
+                      type="button"
+                      onClick={() => { setShowRegenConfirm(false); setOrgPassword(""); }}
+                      className="rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm text-gray-600 hover:bg-gray-50 transition-colors"
+                    >
+                      Cancel
+                    </button>
                   )}
-                >
-                  {isGeneratingOrgKeys
-                    ? <Loader2 className="h-4 w-4 animate-spin" />
-                    : <ShieldCheck className="h-4 w-4" />}
-                  {showRegenConfirm ? "Confirm Regenerate" : "Generate Org Vault Keys"}
-                </button>
-              </div>
-            </>
-          )}
-        </div>
+                  <button
+                    type="button"
+                    onClick={handleGenerateOrgKeys}
+                    disabled={isGeneratingOrgKeys || !orgPassword}
+                    className={cn(
+                      "flex items-center gap-2 rounded-lg px-3 py-2 text-sm text-white transition-colors disabled:opacity-50",
+                      showRegenConfirm ? "bg-red-600 hover:bg-red-700" : "bg-blue-600 hover:bg-blue-700"
+                    )}
+                  >
+                    {isGeneratingOrgKeys && <Loader2 className="h-4 w-4 animate-spin" />}
+                    {showRegenConfirm ? "Replace key" : "Create key"}
+                  </button>
+                </div>
+              </>
+            )}
+          </div>
+        </section>
       )}
 
-      {/* Active Sessions */}
-      <div className="pt-4 border-t border-gray-100 space-y-3">
-        <div className="flex items-center justify-between">
-          <h4 className="text-xs font-bold text-gray-400 uppercase tracking-widest">Active Sessions</h4>
+      {/* ---------------- Devices ---------------- */}
+      <section>
+        <div className="flex items-center justify-between mb-1">
+          <h2 className="text-sm font-medium text-gray-900">Devices</h2>
           <button
             onClick={() => { setIsLoadingSessions(true); getSessions().then(setSessions).catch(() => {}).finally(() => setIsLoadingSessions(false)); }}
+            aria-label="Refresh devices"
             className="text-gray-400 hover:text-gray-700 transition-colors"
           >
-            <RefreshCw className={cn("h-3.5 w-3.5", isLoadingSessions && "animate-spin")} />
+            <RefreshCw className={cn("h-4 w-4", isLoadingSessions && "animate-spin")} />
           </button>
         </div>
+        <p className="text-sm text-gray-500 mb-4">Where you&apos;re signed in right now.</p>
 
         {isLoadingSessions ? (
-          <div className="flex items-center gap-2 text-xs text-gray-400 py-2">
-            <Loader2 className="h-3.5 w-3.5 animate-spin" /> Loading sessions...
-          </div>
+          <p className="text-sm text-gray-400">Loading...</p>
         ) : sessions.length === 0 ? (
-          <p className="text-xs text-gray-400">No active sessions found.</p>
+          <p className="text-sm text-gray-400">No sessions.</p>
         ) : (
-          <div className="space-y-2">
+          <div className="rounded-xl border border-gray-200 bg-white divide-y divide-gray-100">
             {sessions.map((s) => {
               const { label, icon: Icon } = parseDevice(s.userAgent);
               return (
-                <div
-                  key={s.id}
-                  className={cn(
-                    "flex items-center gap-3 p-3 rounded-xl border transition-colors",
-                    s.isCurrent ? "bg-emerald-50 border-emerald-100" : "bg-gray-50 border-gray-100"
-                  )}
-                >
-                  <div className={cn(
-                    "h-8 w-8 rounded-lg flex items-center justify-center shrink-0",
-                    s.isCurrent ? "bg-emerald-100 text-emerald-600" : "bg-gray-100 text-gray-500"
-                  )}>
-                    <Icon className="h-4 w-4" />
-                  </div>
+                <div key={s.id} className="flex items-center gap-3 p-4">
+                  <Icon className="h-4 w-4 text-gray-400 shrink-0" />
                   <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-1.5">
-                      <p className="text-xs font-bold text-gray-800">{label}</p>
-                      {s.isCurrent && (
-                        <span className="text-[9px] font-black text-emerald-600 bg-emerald-100 px-1.5 py-0.5 rounded-full uppercase tracking-wider">
-                          Current
-                        </span>
-                      )}
-                    </div>
-                    <p className="text-[10px] text-gray-400 truncate">
-                      {s.ipAddress && s.ipAddress !== "unknown" ? s.ipAddress : "IP unknown"} · {format(new Date(s.createdAt), "MMM d, HH:mm")}
+                    <p className="text-sm text-gray-900">
+                      {label}
+                      {s.isCurrent && <span className="text-gray-400"> · this device</span>}
+                    </p>
+                    <p className="text-sm text-gray-500 truncate">
+                      {s.ipAddress && s.ipAddress !== "unknown" ? s.ipAddress : "IP unknown"}
+                      {" · "}
+                      {format(new Date(s.createdAt), "MMM d, HH:mm")}
                     </p>
                   </div>
                   {!s.isCurrent && (
                     <button
                       onClick={() => handleRevokeSession(s.id)}
                       disabled={revokingId === s.id}
-                      title="Revoke session"
-                      className="h-7 w-7 flex items-center justify-center rounded-lg text-gray-400 hover:text-red-500 hover:bg-red-50 transition-colors disabled:opacity-40"
+                      className="shrink-0 rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-sm text-gray-600 hover:bg-gray-50 hover:text-red-600 transition-colors disabled:opacity-40"
                     >
-                      {revokingId === s.id ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <LogOut className="h-3.5 w-3.5" />}
+                      {revokingId === s.id ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : "Sign out"}
                     </button>
                   )}
                 </div>
@@ -365,15 +328,9 @@ export default function SecurityCenter({ user }: SecurityCenterProps) {
             })}
           </div>
         )}
-      </div>
-
-      {/* Footer status */}
-      <div className="mt-auto pt-4 border-t border-gray-100 flex items-center gap-2 text-xs text-gray-400">
-        <CheckCircle2 className="h-3.5 w-3.5 text-emerald-500" />
-        Zero-Knowledge Active
-      </div>
+      </section>
 
       <ResetPasswordModal isOpen={isResetModalOpen} onClose={() => setIsResetModalOpen(false)} user={user} />
-    </section>
+    </div>
   );
 }

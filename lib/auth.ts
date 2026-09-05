@@ -13,14 +13,33 @@ export const auth = betterAuth({
       create: {
         after: async (session) => {
           prisma.user
-            .findUnique({ where: { id: session.userId }, select: { email: true, name: true } })
+            .findUnique({
+              where: { id: session.userId },
+              select: { email: true, name: true, orgId: true },
+            })
             .then((user) => {
               if (!user) return;
+
+              // Record the sign-in for the audit trail. Scoped to the user's org
+              // so admins can see it. Fire-and-forget: a logging failure must
+              // never block the session from being created.
+              prisma.auditLog
+                .create({
+                  data: {
+                    userId: session.userId,
+                    actionType: "LOGIN",
+                    initiatorOrgId: user.orgId,
+                    ipAddress: session.ipAddress || "unknown",
+                    metadata: { userAgent: session.userAgent || null },
+                  },
+                })
+                .catch((err) => console.error("[audit] Failed to log LOGIN:", err));
+
               const appUrl = process.env.BETTER_AUTH_URL || "http://localhost:3000";
               transporter.sendMail({
                 from: `"SecureShare" <${process.env.SMTP_USER}>`,
                 to: user.email,
-                subject: "New sign-in to your SecureShare account",
+                subject: "New sign-in to SecureShare",
                 html: `
                   <div style="font-family:sans-serif;padding:40px;background:#f8fafc;">
                     <div style="max-width:520px;margin:0 auto;background:white;padding:36px;border-radius:20px;border:1px solid #e2e8f0;">
@@ -30,13 +49,13 @@ export const auth = betterAuth({
                         </div>
                         <span style="font-size:15px;font-weight:800;color:#1e293b;">SecureShare</span>
                       </div>
-                      <h2 style="font-size:18px;font-weight:700;color:#1e293b;margin:0 0 8px;">New sign-in detected</h2>
+                      <h2 style="font-size:18px;font-weight:700;color:#1e293b;margin:0 0 8px;">New sign-in</h2>
                       <p style="color:#64748b;font-size:14px;margin:0 0 20px;">
-                        Hi <strong style="color:#1e293b;">${user.name || user.email}</strong>, a new session was just started on your account.
+                        Someone just signed in to your account${session.ipAddress ? ` from ${session.ipAddress}` : ""}.
                       </p>
-                      <p style="color:#94a3b8;font-size:12px;margin:0 0 24px;">If this was you, no action is needed. If you didn't sign in, secure your account immediately.</p>
+                      <p style="color:#94a3b8;font-size:12px;margin:0 0 24px;">Was it you? Nothing to do. If not, sign that device out below.</p>
                       <a href="${appUrl}/profile" style="display:inline-block;background:#2563eb;color:white;padding:11px 24px;text-decoration:none;border-radius:11px;font-weight:700;font-size:13px;">
-                        Review Account Security
+                        Check your sessions
                       </a>
                     </div>
                   </div>

@@ -13,22 +13,22 @@ datasource db {
 }
 
 model User {
-  id              String    @id
+  id              String   @id
   name            String
   email           String
-  emailVerified   Boolean   @default(false)
+  emailVerified   Boolean  @default(false)
   image           String?
-  createdAt       DateTime  @default(now())
-  updatedAt       DateTime  @updatedAt
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
   username        String?
   displayUsername String?
-  onboarded       Boolean?  @default(false)
-  
+  onboarded       Boolean? @default(false)
+
   // Custom SecureShare fields
-  orgId           String?
-  role            String?   @default("USER") // OWNER, ADMIN, USER
-  publicKey       String?   @db.Text
-  
+  orgId     String?
+  role      String? @default("USER") // OWNER, ADMIN, USER
+  publicKey String? @db.Text
+
   // Key Sync (Zero-Knowledge)
   encryptedPrivateKey String? @db.Text
   privateKeySalt      String? // Salt for PBKDF2
@@ -38,21 +38,26 @@ model User {
   recoveryEncryptedPrivateKey String? @db.Text
   recoverySalt                String?
   recoveryIV                  String?
-  
-  sessions        Session[]
-  accounts        Account[]
-  organization    Organization? @relation(fields: [orgId], references: [id])
-  
+
+  // PBKDF2 rounds used for the blobs above. Null means a key written before
+  // the count was recorded, which used 100_000.
+  kdfIterations Int?
+
+  sessions     Session[]
+  accounts     Account[]
+  organization Organization? @relation(fields: [orgId], references: [id])
+
   sentDocuments     Document[]          @relation("Sender")
   receivedDocuments DocumentRecipient[] @relation("ReceivedDocuments")
-  
-  sentMessages      Message[]           @relation("SentMessages")
-  receivedMessages  MessageRecipient[]  @relation("ReceivedMessages")
-  
-  auditLogs       AuditLog[]
+
+  sentMessages     Message[]          @relation("SentMessages")
+  receivedMessages MessageRecipient[] @relation("ReceivedMessages")
+
+  auditLogs AuditLog[]
 
   @@unique([email])
   @@unique([username])
+  @@index([orgId])
   @@map("user")
 }
 
@@ -67,6 +72,7 @@ model Organization {
   encryptedPrivateKey String? @db.Text
   privateKeySalt      String?
   privateKeyIV        String?
+  kdfIterations       Int?
 
   users         User[]
   messages      Message[]
@@ -78,14 +84,14 @@ model Organization {
 }
 
 model Invitation {
-  id         String   @id @default(cuid())
-  email      String
-  orgId      String
-  role       String   @default("USER") // ADMIN, USER
-  inviterId  String
-  status     String   @default("PENDING") // PENDING, ACCEPTED, REVOKED
-  expiresAt  DateTime
-  createdAt  DateTime @default(now())
+  id        String   @id @default(cuid())
+  email     String
+  orgId     String
+  role      String   @default("USER") // ADMIN, USER
+  inviterId String
+  status    String   @default("PENDING") // PENDING, ACCEPTED, REVOKED
+  expiresAt DateTime
+  createdAt DateTime @default(now())
 
   organization Organization @relation(fields: [orgId], references: [id])
 
@@ -108,6 +114,9 @@ model Message {
   recipients   MessageRecipient[]
   orgShares    MessageOrgShare[]
 
+  @@index([senderId, createdAt])
+  @@index([orgId])
+  @@index([expiryDate])
   @@map("message")
 }
 
@@ -134,63 +143,70 @@ model MessageRecipient {
   archivedAt      DateTime?
   readAt          DateTime?
 
-  message   Message  @relation(fields: [messageId], references: [id], onDelete: Cascade)
-  user      User     @relation("ReceivedMessages", fields: [userId], references: [id])
+  message Message @relation(fields: [messageId], references: [id], onDelete: Cascade)
+  user    User    @relation("ReceivedMessages", fields: [userId], references: [id])
 
   @@unique([messageId, userId])
+  @@index([userId, deletedAt, archivedAt])
   @@map("message_recipient")
 }
 
 model Document {
-  id               String   @id @default(cuid())
-  messageId        String?
-  senderId         String
-  orgId            String?
-  fileUrl          String?
-  fileName         String?
-  fileSize         Int?
-  contentType      String?
-  expiryDate       DateTime?
-  status           String   @default("Available") // Available, Viewed, Expired
-  createdAt        DateTime @default(now())
-  updatedAt        DateTime @updatedAt
+  id          String    @id @default(cuid())
+  messageId   String?
+  senderId    String
+  orgId       String?
+  fileUrl     String?
+  fileName    String?
+  fileSize    Int?
+  contentType String?
+  expiryDate  DateTime?
+  status      String    @default("Available") // Available, Viewed, Expired
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
 
-  message      Message?      @relation(fields: [messageId], references: [id])
-  sender       User          @relation("Sender", fields: [senderId], references: [id])
-  organization Organization? @relation(fields: [orgId], references: [id])
+  message      Message?            @relation(fields: [messageId], references: [id])
+  sender       User                @relation("Sender", fields: [senderId], references: [id])
+  organization Organization?       @relation(fields: [orgId], references: [id])
   recipients   DocumentRecipient[]
 
+  @@index([messageId])
+  @@index([expiryDate])
   @@map("document")
 }
 
 model DocumentRecipient {
-  id              String   @id @default(cuid())
+  id              String @id @default(cuid())
   documentId      String
   userId          String
-  encryptedAesKey String   @db.Text
-  
-  document  Document @relation(fields: [documentId], references: [id], onDelete: Cascade)
-  user      User     @relation("ReceivedDocuments", fields: [userId], references: [id])
+  encryptedAesKey String @db.Text
+
+  document Document @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  user     User     @relation("ReceivedDocuments", fields: [userId], references: [id])
 
   @@unique([documentId, userId])
+  @@index([userId])
   @@map("document_recipient")
 }
 
 model AuditLog {
-  id              String   @id @default(cuid())
-  userId          String
-  actionType      String   // MESSAGE_SENT, DOC_SHARED, LOGIN, etc.
-  initiatorOrgId  String?
-  targetOrgId     String?
-  ipAddress       String?
-  metadata        Json?    // For flexible extra details
-  timestamp       DateTime @default(now())
+  id             String   @id @default(cuid())
+  userId         String
+  actionType     String // MESSAGE_SENT, DOC_SHARED, LOGIN, etc.
+  initiatorOrgId String?
+  targetOrgId    String?
+  ipAddress      String?
+  metadata       Json? // For flexible extra details
+  timestamp      DateTime @default(now())
 
-  user            User     @relation(fields: [userId], references: [id])
+  user User @relation(fields: [userId], references: [id])
 
+  @@index([timestamp])
+  @@index([userId])
+  @@index([initiatorOrgId])
+  @@index([targetOrgId])
   @@map("audit_log")
 }
-
 
 model Session {
   id        String   @id

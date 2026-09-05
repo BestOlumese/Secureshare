@@ -15,7 +15,7 @@ const geistMono = Geist_Mono({
 
 export const metadata: Metadata = {
   title: "SecureShare | End-to-End Encrypted File Sharing",
-  description: "Securely encrypt, send, and decrypt files with zero-knowledge architecture.",
+  description: "Send files and messages only the people you choose can read.",
 };
 
 export default function RootLayout({

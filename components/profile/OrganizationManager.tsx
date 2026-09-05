@@ -1,34 +1,28 @@
 "use client";
 
 import { useState } from "react";
-import {
-  Users, Mail, UserPlus, Shield, X, Loader2, Trash2, ShieldAlert, Building2, Crown,
-} from "lucide-react";
+import { X, Loader2, Plus } from "lucide-react";
 import {
   inviteUserToOrg, revokeInvitation, updateMemberRole, removeMember, updateOrganization,
 } from "@/app/actions/org-actions";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
+import type { CurrentUser, OrgMember, OrgInvitation } from "@/lib/types";
+import { avatarColor, avatarInitial } from "@/lib/avatar";
+import { useModalA11y } from "@/lib/use-modal-a11y";
+import { motion, AnimatePresence } from "framer-motion";
+import { getErrorMessage } from "@/lib/utils";
 
 interface OrganizationManagerProps {
-  user: any;
-  members: any[];
-  invitations: any[];
+  user: CurrentUser;
+  members: OrgMember[];
+  invitations: OrgInvitation[];
 }
 
-const ROLE_STYLES: Record<string, string> = {
-  OWNER: "bg-amber-50 text-amber-600 border-amber-200",
-  ADMIN: "bg-blue-50 text-blue-600 border-blue-200",
-  USER: "bg-gray-100 text-gray-500 border-gray-200",
-};
-
-const AVATAR_PALETTE = [
-  "bg-blue-500", "bg-violet-500", "bg-emerald-500",
-  "bg-amber-500", "bg-rose-500", "bg-cyan-500",
-];
-function getAvatarColor(str: string) {
-  return AVATAR_PALETTE[str.toLowerCase().charCodeAt(0) % AVATAR_PALETTE.length];
-}
+/** Members and pending invites share one list, so rows carry a status. */
+type Row =
+  | { kind: "member"; id: string; name: string; email: string; role: string }
+  | { kind: "invite"; id: string; email: string; role: string };
 
 export default function OrganizationManager({ user, members, invitations }: OrganizationManagerProps) {
   const [inviteEmail, setInviteEmail] = useState("");
@@ -36,14 +30,26 @@ export default function OrganizationManager({ user, members, invitations }: Orga
   const [isInviting, setIsInviting] = useState(false);
   const [orgName, setOrgName] = useState(user.organization?.name || "");
   const [isUpdatingOrg, setIsUpdatingOrg] = useState(false);
+  const [isInviteOpen, setIsInviteOpen] = useState(false);
+  const inviteDialogRef = useModalA11y<HTMLDivElement>(isInviteOpen, () => setIsInviteOpen(false));
 
   const isAdminOrOwner = user.role === "OWNER" || user.role === "ADMIN";
   const pendingInvitations = invitations.filter((i) => i.status === "PENDING");
 
   const inputClass =
-    "flex-1 rounded-xl border border-gray-200 bg-gray-50 py-2.5 px-4 text-sm text-gray-900 placeholder:text-gray-400 focus:border-blue-400 focus:bg-white focus:outline-none focus:ring-2 focus:ring-blue-500/10 transition-all";
-  const btnPrimary =
-    "flex items-center justify-center gap-2 rounded-xl bg-blue-600 px-5 py-2.5 text-sm font-bold text-white hover:bg-blue-700 transition-colors disabled:opacity-60 whitespace-nowrap";
+    "w-full rounded-lg border border-gray-200 bg-gray-50 py-2.5 px-3 text-sm text-gray-900 placeholder:text-gray-400 focus:border-blue-400 focus:bg-white focus:outline-none focus:ring-2 focus:ring-blue-500/10 transition-all";
+
+  const rows: Row[] = [
+    ...members.map((m): Row => ({
+      kind: "member", id: m.id, name: m.name, email: m.email, role: m.role || "USER",
+    })),
+    ...pendingInvitations.map((i): Row => ({
+      kind: "invite", id: i.id, email: i.email, role: i.role,
+    })),
+  ];
+
+  const roleLabel = (role: string) =>
+    role === "OWNER" ? "Owner" : role === "ADMIN" ? "Admin" : "Member";
 
   const handleUpdateOrg = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -51,10 +57,10 @@ export default function OrganizationManager({ user, members, invitations }: Orga
     setIsUpdatingOrg(true);
     try {
       await updateOrganization({ name: orgName });
-      toast.success("Organization renamed!");
+      toast.success("Renamed");
       window.location.reload();
-    } catch (err: any) {
-      toast.error(err.message);
+    } catch (err: unknown) {
+      toast.error(getErrorMessage(err, "Couldn't rename it."));
     } finally {
       setIsUpdatingOrg(false);
     }
@@ -66,11 +72,12 @@ export default function OrganizationManager({ user, members, invitations }: Orga
     setIsInviting(true);
     try {
       await inviteUserToOrg(inviteEmail, inviteRole);
-      toast.success("Invitation sent!");
+      toast.success("Invitation sent");
       setInviteEmail("");
+      setIsInviteOpen(false);
       window.location.reload();
-    } catch (err: any) {
-      toast.error(err.message);
+    } catch (err: unknown) {
+      toast.error(getErrorMessage(err, "Couldn't send the invitation."));
     } finally {
       setIsInviting(false);
     }
@@ -79,20 +86,20 @@ export default function OrganizationManager({ user, members, invitations }: Orga
   const handleRevoke = async (id: string) => {
     try {
       await revokeInvitation(id);
-      toast.success("Invitation revoked.");
+      toast.success("Invitation revoked");
       window.location.reload();
-    } catch (err: any) {
-      toast.error(err.message);
+    } catch (err: unknown) {
+      toast.error(getErrorMessage(err, "Couldn't revoke it."));
     }
   };
 
   const handleUpdateRole = async (targetUserId: string, newRole: "ADMIN" | "USER") => {
     try {
       await updateMemberRole(targetUserId, newRole);
-      toast.success("Role updated.");
+      toast.success("Role updated");
       window.location.reload();
-    } catch (err: any) {
-      toast.error(err.message);
+    } catch (err: unknown) {
+      toast.error(getErrorMessage(err, "Couldn't change their role."));
     }
   };
 
@@ -100,197 +107,211 @@ export default function OrganizationManager({ user, members, invitations }: Orga
     if (!confirm("Remove this member from the organization?")) return;
     try {
       await removeMember(targetUserId);
-      toast.success("Member removed.");
+      toast.success("Member removed");
       window.location.reload();
-    } catch (err: any) {
-      toast.error(err.message);
+    } catch (err: unknown) {
+      toast.error(getErrorMessage(err, "Couldn't remove them."));
     }
   };
 
   return (
-    <div className="space-y-5">
+    <div className="space-y-10">
 
-      {!isAdminOrOwner ? (
-        <div className="bg-white rounded-2xl border border-gray-200 p-6">
-          <p className="text-sm text-gray-500">
-            You are a member of{" "}
-            <span className="font-semibold text-blue-600">{user.organization?.name}</span>.
-            Only administrators can manage this organization.
-          </p>
+      {/* ---------------- Organization ---------------- */}
+      <section>
+        <h2 className="text-sm font-medium text-gray-900 mb-1">Organization</h2>
+        <p className="text-sm text-gray-500 mb-4">
+          {isAdminOrOwner
+            ? "The name people see when you send them a message."
+            : `You're a member of ${user.organization?.name}. Only admins can make changes.`}
+        </p>
+
+        {isAdminOrOwner && (
+          <form onSubmit={handleUpdateOrg} className="flex gap-2 max-w-md">
+            <input
+              value={orgName}
+              onChange={(e) => setOrgName(e.target.value)}
+              aria-label="Organization name"
+              className={inputClass}
+            />
+            <button
+              type="submit"
+              disabled={isUpdatingOrg || orgName === user.organization?.name || !orgName.trim()}
+              className="shrink-0 rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm text-gray-700 hover:bg-gray-50 transition-colors disabled:opacity-40"
+            >
+              {isUpdatingOrg ? <Loader2 className="h-4 w-4 animate-spin" /> : "Save"}
+            </button>
+          </form>
+        )}
+      </section>
+
+      {/* ---------------- People ---------------- */}
+      <section>
+        <div className="flex items-center justify-between mb-1">
+          <h2 className="text-sm font-medium text-gray-900">People</h2>
+          {isAdminOrOwner && (
+            <button
+              onClick={() => setIsInviteOpen(true)}
+              className="flex items-center gap-1.5 rounded-lg bg-blue-600 px-3 py-1.5 text-sm text-white hover:bg-blue-700 transition-colors"
+            >
+              <Plus className="h-3.5 w-3.5" />
+              Invite
+            </button>
+          )}
         </div>
-      ) : (
-        <>
-          {/* Org Name */}
-          <section className="bg-white rounded-2xl border border-gray-200 p-5">
-            <h4 className="text-xs font-bold text-gray-400 uppercase tracking-widest mb-4 flex items-center gap-2">
-              <Building2 className="h-3.5 w-3.5" />
-              Organization Name
-            </h4>
-            <form onSubmit={handleUpdateOrg} className="flex gap-3">
-              <input
-                type="text"
-                value={orgName}
-                onChange={(e) => setOrgName(e.target.value)}
-                placeholder="Organization Name"
-                className={inputClass}
-              />
-              <button
-                type="submit"
-                disabled={isUpdatingOrg || orgName === user.organization?.name}
-                className={btnPrimary}
-              >
-                {isUpdatingOrg ? <Loader2 className="h-4 w-4 animate-spin" /> : "Save"}
-              </button>
-            </form>
-          </section>
+        <p className="text-sm text-gray-500 mb-4">
+          {members.length} {members.length === 1 ? "member" : "members"}
+          {pendingInvitations.length > 0 && `, ${pendingInvitations.length} invited`}
+        </p>
 
-          {/* Invite Member */}
-          <section className="bg-white rounded-2xl border border-gray-200 p-5">
-            <h4 className="text-xs font-bold text-gray-400 uppercase tracking-widest mb-4 flex items-center gap-2">
-              <UserPlus className="h-3.5 w-3.5" />
-              Invite Member
-            </h4>
-            <form onSubmit={handleInvite} className="flex flex-col sm:flex-row gap-3">
-              <input
-                type="email"
-                value={inviteEmail}
-                onChange={(e) => setInviteEmail(e.target.value)}
-                placeholder="colleague@company.com"
-                className={inputClass}
-              />
-              <select
-                value={inviteRole}
-                onChange={(e) => setInviteRole(e.target.value as any)}
-                className="rounded-xl border border-gray-200 bg-gray-50 py-2.5 px-3 text-sm text-gray-700 focus:border-blue-400 focus:outline-none focus:bg-white transition-all"
-              >
-                <option value="USER">User</option>
-                <option value="ADMIN">Admin</option>
-              </select>
-              <button type="submit" disabled={isInviting} className={btnPrimary}>
-                {isInviting ? <Loader2 className="h-4 w-4 animate-spin" /> : (
-                  <><UserPlus className="h-4 w-4" />Invite</>
+        <div className="rounded-xl border border-gray-200 bg-white divide-y divide-gray-100">
+          {rows.map((row) => (
+            <div key={`${row.kind}-${row.id}`} className="flex items-center gap-3 p-4">
+              <div
+                className={cn(
+                  "h-8 w-8 rounded-full flex items-center justify-center text-sm font-medium shrink-0",
+                  row.kind === "invite"
+                    ? "bg-gray-100 text-gray-400"
+                    : avatarColor(row.email)
                 )}
-              </button>
-            </form>
-          </section>
-        </>
-      )}
-
-      {/* Members & Invitations */}
-      <div className="grid gap-5 md:grid-cols-2">
-
-        {/* Members */}
-        <section className="bg-white rounded-2xl border border-gray-200 p-5">
-          <div className="flex items-center justify-between mb-4">
-            <h4 className="text-xs font-bold text-gray-400 uppercase tracking-widest flex items-center gap-2">
-              <Users className="h-3.5 w-3.5" />
-              Members
-            </h4>
-            <span className="text-[10px] font-bold bg-gray-100 text-gray-500 px-2 py-0.5 rounded-full border border-gray-200">
-              {members.length}
-            </span>
-          </div>
-
-          <div className="space-y-2">
-            {members.map((m) => (
-              <div
-                key={m.id}
-                className="flex items-center justify-between p-3 rounded-xl border border-gray-100 bg-gray-50 gap-2"
               >
-                <div className="flex items-center gap-3 min-w-0">
-                  <div
-                    className={cn(
-                      "h-8 w-8 rounded-full flex items-center justify-center text-xs font-bold text-white shrink-0",
-                      getAvatarColor(m.name || m.email)
-                    )}
-                  >
-                    {(m.name || m.email).charAt(0).toUpperCase()}
-                  </div>
-                  <div className="min-w-0">
-                    <p className="text-sm font-semibold text-gray-800 truncate">{m.name}</p>
-                    <p className="text-[10px] text-gray-400 truncate">{m.email}</p>
-                  </div>
-                </div>
-
-                <div className="flex items-center gap-1.5 shrink-0">
-                  <span className={cn(
-                    "flex items-center gap-1 text-[9px] font-black px-2 py-0.5 rounded-full uppercase tracking-widest border",
-                    ROLE_STYLES[m.role] || ROLE_STYLES.USER
-                  )}>
-                    {m.role === "OWNER" && <Crown className="h-2.5 w-2.5" />}
-                    {m.role === "ADMIN" && <Shield className="h-2.5 w-2.5" />}
-                    {m.role}
-                  </span>
-
-                  {user.id !== m.id &&
-                    m.role !== "OWNER" &&
-                    (user.role === "OWNER" || (user.role === "ADMIN" && m.role === "USER")) && (
-                      <div className="flex gap-0.5">
-                        <button
-                          onClick={() => handleUpdateRole(m.id, m.role === "ADMIN" ? "USER" : "ADMIN")}
-                          title="Toggle Role"
-                          className="p-1.5 rounded-lg text-gray-300 hover:text-blue-600 hover:bg-blue-50 transition-colors"
-                        >
-                          <ShieldAlert className="h-3.5 w-3.5" />
-                        </button>
-                        <button
-                          onClick={() => handleRemove(m.id)}
-                          title="Remove"
-                          className="p-1.5 rounded-lg text-gray-300 hover:text-red-500 hover:bg-red-50 transition-colors"
-                        >
-                          <Trash2 className="h-3.5 w-3.5" />
-                        </button>
-                      </div>
-                    )}
-                </div>
+                {row.kind === "member" ? avatarInitial(row.name, row.email) : "?"}
               </div>
-            ))}
-          </div>
-        </section>
 
-        {/* Pending Invitations */}
-        <section className="bg-white rounded-2xl border border-gray-200 p-5">
-          <div className="flex items-center justify-between mb-4">
-            <h4 className="text-xs font-bold text-gray-400 uppercase tracking-widest flex items-center gap-2">
-              <Mail className="h-3.5 w-3.5" />
-              Pending Invitations
-            </h4>
-            <span className="text-[10px] font-bold bg-gray-100 text-gray-500 px-2 py-0.5 rounded-full border border-gray-200">
-              {pendingInvitations.length}
-            </span>
-          </div>
+              <div className="flex-1 min-w-0">
+                <p className="text-sm text-gray-900 truncate">
+                  {row.kind === "member" ? row.name : row.email}
+                  {row.kind === "invite" && <span className="text-gray-400"> · invited</span>}
+                </p>
+                {row.kind === "member" && (
+                  <p className="text-sm text-gray-500 truncate">{row.email}</p>
+                )}
+              </div>
 
-          <div className="space-y-2">
-            {pendingInvitations.map((inv) => (
-              <div
-                key={inv.id}
-                className="flex items-center justify-between p-3 rounded-xl border border-gray-100 bg-gray-50 gap-2"
-              >
-                <div className="min-w-0 flex-1">
-                  <p className="text-sm font-semibold text-gray-800 truncate">{inv.email}</p>
-                  <p className="text-[10px] text-gray-400 uppercase tracking-widest mt-0.5">
-                    {inv.role} · {new Date(inv.createdAt).toLocaleDateString()}
+              {/* Owners can't be changed, and admins can't act on other admins. */}
+              {row.kind === "member" ? (
+                isAdminOrOwner && row.role !== "OWNER" && row.id !== user.id &&
+                !(user.role === "ADMIN" && row.role === "ADMIN") ? (
+                  <div className="flex items-center gap-2 shrink-0">
+                    <select
+                      value={row.role}
+                      onChange={(e) => handleUpdateRole(row.id, e.target.value as "ADMIN" | "USER")}
+                      aria-label={`Role for ${row.name}`}
+                      className="rounded-lg border border-gray-200 bg-white py-1.5 px-2 text-sm text-gray-700 focus:border-blue-400 focus:outline-none"
+                    >
+                      <option value="USER">Member</option>
+                      <option value="ADMIN">Admin</option>
+                    </select>
+                    <button
+                      onClick={() => handleRemove(row.id)}
+                      className="rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-sm text-gray-600 hover:bg-gray-50 hover:text-red-600 transition-colors"
+                    >
+                      Remove
+                    </button>
+                  </div>
+                ) : (
+                  <span className="text-sm text-gray-500 shrink-0">{roleLabel(row.role)}</span>
+                )
+              ) : (
+                isAdminOrOwner && (
+                  <button
+                    onClick={() => handleRevoke(row.id)}
+                    className="shrink-0 rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-sm text-gray-600 hover:bg-gray-50 hover:text-red-600 transition-colors"
+                  >
+                    Cancel
+                  </button>
+                )
+              )}
+            </div>
+          ))}
+
+          {rows.length === 0 && (
+            <p className="p-4 text-sm text-gray-400">Nobody here yet.</p>
+          )}
+        </div>
+      </section>
+
+      {/* ---------------- Invite dialog ---------------- */}
+      <AnimatePresence>
+        {isInviteOpen && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => setIsInviteOpen(false)}
+              className="absolute inset-0 bg-black/40 backdrop-blur-sm"
+            />
+            <motion.div
+              ref={inviteDialogRef}
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="invite-dialog-title"
+              tabIndex={-1}
+              initial={{ opacity: 0, scale: 0.95, y: 20 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 20 }}
+              className="relative w-full max-w-md rounded-xl border border-gray-200 bg-white shadow-xl p-6 outline-none"
+            >
+              <div className="flex items-start justify-between mb-4">
+                <div>
+                  <h3 id="invite-dialog-title" className="text-base font-semibold text-gray-900">
+                    Invite someone
+                  </h3>
+                  <p className="text-sm text-gray-500">
+                    They&apos;ll get an email with a link to join.
                   </p>
                 </div>
                 <button
-                  onClick={() => handleRevoke(inv.id)}
-                  title="Revoke"
-                  className="p-1.5 rounded-lg text-gray-300 hover:text-red-500 hover:bg-red-50 transition-colors shrink-0"
+                  onClick={() => setIsInviteOpen(false)}
+                  aria-label="Close"
+                  className="text-gray-400 hover:text-gray-700 transition-colors"
                 >
-                  <X className="h-3.5 w-3.5" />
+                  <X className="h-5 w-5" />
                 </button>
               </div>
-            ))}
 
-            {pendingInvitations.length === 0 && (
-              <div className="flex flex-col items-center justify-center py-8 text-center">
-                <Mail className="h-6 w-6 text-gray-200 mb-2" />
-                <p className="text-sm text-gray-400">No pending invitations.</p>
-              </div>
-            )}
+              <form onSubmit={handleInvite} className="space-y-3">
+                <input
+                  type="email"
+                  value={inviteEmail}
+                  onChange={(e) => setInviteEmail(e.target.value)}
+                  placeholder="name@company.com"
+                  aria-label="Email address"
+                  className={inputClass}
+                />
+                <select
+                  value={inviteRole}
+                  onChange={(e) => setInviteRole(e.target.value as "ADMIN" | "USER")}
+                  aria-label="Role"
+                  className={inputClass}
+                >
+                  <option value="USER">Member</option>
+                  <option value="ADMIN">Admin</option>
+                </select>
+
+                <div className="flex justify-end gap-2 pt-1">
+                  <button
+                    type="button"
+                    onClick={() => setIsInviteOpen(false)}
+                    className="rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm text-gray-600 hover:bg-gray-50 transition-colors"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="submit"
+                    disabled={isInviting || !inviteEmail}
+                    className="flex items-center gap-2 rounded-lg bg-blue-600 px-3 py-2 text-sm text-white hover:bg-blue-700 transition-colors disabled:opacity-50"
+                  >
+                    {isInviting && <Loader2 className="h-4 w-4 animate-spin" />}
+                    Send invite
+                  </button>
+                </div>
+              </form>
+            </motion.div>
           </div>
-        </section>
-      </div>
+        )}
+      </AnimatePresence>
     </div>
   );
 }

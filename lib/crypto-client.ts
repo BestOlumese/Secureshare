@@ -204,9 +204,26 @@ export async function unwrapAesKey(
 }
 
 /**
+ * PBKDF2 rounds for newly derived keys. OWASP's current floor for
+ * PBKDF2-SHA256; each round is work an offline password guesser must repeat.
+ */
+export const PBKDF2_ITERATIONS = 600_000;
+
+/**
+ * What keys used before the count was recorded. Anything with a null
+ * kdfIterations was derived with this and must keep using it, or it stops
+ * decrypting.
+ */
+export const LEGACY_PBKDF2_ITERATIONS = 100_000;
+
+/**
  * Derives a cryptographic key from a password using PBKDF2.
  */
-async function deriveKeyFromPassword(password: string, salt: Uint8Array): Promise<CryptoKey> {
+async function deriveKeyFromPassword(
+  password: string,
+  salt: Uint8Array,
+  iterations: number
+): Promise<CryptoKey> {
   const encoder = new TextEncoder();
   const passwordKey = await window.crypto.subtle.importKey(
     "raw",
@@ -220,7 +237,7 @@ async function deriveKeyFromPassword(password: string, salt: Uint8Array): Promis
     {
       name: "PBKDF2",
       salt: salt as unknown as BufferSource,
-      iterations: 100000,
+      iterations,
       hash: "SHA-256",
     },
     passwordKey,
@@ -236,11 +253,11 @@ async function deriveKeyFromPassword(password: string, salt: Uint8Array): Promis
 export async function encryptPrivateKeyForSync(
   privateKeyBuffer: ArrayBuffer,
   password: string
-): Promise<{ encryptedKey: string; salt: string; iv: string }> {
+): Promise<{ encryptedKey: string; salt: string; iv: string; iterations: number }> {
   const salt = window.crypto.getRandomValues(new Uint8Array(16));
   const iv = window.crypto.getRandomValues(new Uint8Array(12));
-  
-  const encryptionKey = await deriveKeyFromPassword(password, salt);
+
+  const encryptionKey = await deriveKeyFromPassword(password, salt, PBKDF2_ITERATIONS);
   const encryptedContent = await window.crypto.subtle.encrypt(
     { name: "AES-GCM", iv },
     encryptionKey,
@@ -251,6 +268,9 @@ export async function encryptPrivateKeyForSync(
     encryptedKey: btoa(String.fromCharCode(...new Uint8Array(encryptedContent))),
     salt: btoa(String.fromCharCode(...salt)),
     iv: btoa(String.fromCharCode(...iv)),
+    // Stored alongside the blob so it can still be decrypted after this
+    // constant changes again.
+    iterations: PBKDF2_ITERATIONS,
   };
 }
 
@@ -261,13 +281,19 @@ export async function decryptPrivateKeyFromSync(
   encryptedKeyBase64: string,
   password: string,
   saltBase64: string,
-  ivBase64: string
+  ivBase64: string,
+  iterations?: number | null
 ): Promise<ArrayBuffer> {
   const salt = new Uint8Array(atob(saltBase64).split("").map(c => c.charCodeAt(0)));
   const iv = new Uint8Array(atob(ivBase64).split("").map(c => c.charCodeAt(0)));
   const encryptedKey = new Uint8Array(atob(encryptedKeyBase64).split("").map(c => c.charCodeAt(0)));
 
-  const decryptionKey = await deriveKeyFromPassword(password, salt);
+  // A missing count means the blob predates the column: it was 100k.
+  const decryptionKey = await deriveKeyFromPassword(
+    password,
+    salt,
+    iterations ?? LEGACY_PBKDF2_ITERATIONS
+  );
   
   return window.crypto.subtle.decrypt(
     { name: "AES-GCM", iv },
@@ -309,7 +335,36 @@ export function importPrivateKeyFromManualBackup(base64: string): ArrayBuffer {
 export async function encryptPrivateKeyWithRecoveryKey(
   privateKeyBuffer: ArrayBuffer,
   recoveryKey: string
-): Promise<{ encryptedKey: string; salt: string; iv: string }> {
+): Promise<{ encryptedKey: string; salt: string; iv: string; iterations: number }> {
   // We use the same sync logic but with the recovery key
   return encryptPrivateKeyForSync(privateKeyBuffer, recoveryKey);
+}
+
+/**
+ * Attempts to decrypt a base64 AES-GCM payload, returning null instead of
+ * throwing when the value isn't valid ciphertext (e.g. legacy plaintext rows).
+ */
+export async function tryDecryptString(
+  base64Data: string | null | undefined,
+  aesKey: CryptoKey
+): Promise<string | null> {
+  if (!base64Data) return null;
+  try {
+    return await decryptString(base64Data, aesKey);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Builds an opaque upload name so the storage provider never sees the real
+ * file name. The extension is kept because the upload router keys off it.
+ */
+export function opaqueUploadName(originalName: string): string {
+  const dot = originalName.lastIndexOf(".");
+  const ext = dot > 0 ? originalName.slice(dot + 1).toLowerCase() : "";
+  const rand = Array.from(window.crypto.getRandomValues(new Uint8Array(16)), (b) =>
+    b.toString(16).padStart(2, "0")
+  ).join("");
+  return ext ? `${rand}.${ext}` : rand;
 }

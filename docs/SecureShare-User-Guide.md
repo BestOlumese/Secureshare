@@ -140,9 +140,13 @@ Your Master Password is **not** used to log in — you already log in using the 
 - Safely stored on SecureShare's server in an encrypted form (so you can use SecureShare from a new device without losing access to old messages), and
 - Quickly unlocked again whenever you need to read a message.
 
-Choose a Master Password that is at least 8 characters long. Because this password protects your actual encryption keys (not just your login), we strongly recommend:
+Choose a Master Password that is **at least 12 characters long** and mixes at least three of: lower case, upper case, numbers, and symbols. SecureShare shows a strength meter as you type and will not accept a password that is too short, too repetitive, or one of the commonly used passwords attackers try first.
 
-- Making it long and unique — don't reuse a password from another site.
+The requirement is strict for a specific reason. This password is not checked by a server that could rate-limit guesses — it mathematically derives the key that unlocks your private key. Anyone who obtained your encrypted key could guess passwords against it offline, as fast as their hardware allows. Length is what makes that impractical.
+
+Because this password protects your actual encryption keys (not just your login), we also strongly recommend:
+
+- Making it long and unique — don't reuse a password from another site. A memorable passphrase of several words beats a short, complicated one.
 - Storing it in a password manager if you use one.
 - Never sharing it with anyone, including SecureShare support — nobody at SecureShare can recover it for you if it's lost (this is what "zero-knowledge" means in practice).
 
@@ -255,7 +259,7 @@ To start a new message, click **Compose** in the sidebar, or press the **`c`** k
 
 The Compose window includes:
 
-- **To** — the primary recipient's email address. As you type an organization name here, SecureShare can search and match it against known organizations.
+- **To** — the primary recipient's email address. They need a SecureShare account already: encryption requires their public key, so there is nothing to encrypt to until they have one. If they don't, invite them to your organization first (Section 17), or ask them to sign up. As you type an organization name here, SecureShare can search and match it against known organizations.
 - **CC** — optional additional recipients. You can add multiple CC recipients, and remove any of them before sending.
 - **Subject** — a plain-text subject line. (Unlike the message body and attachments, the subject line is not separately end-to-end encrypted the way content is — avoid putting highly sensitive details directly in the subject.)
 - **Message Content** — the body of your message. This is fully encrypted before it leaves your device.
@@ -267,7 +271,7 @@ The Compose window includes:
 Behind the scenes, the moment you click Send, SecureShare:
 
 1. Generates a brand-new, random encryption key just for this one message.
-2. Locks (encrypts) your message text and every attached file with that key, entirely within your browser.
+2. Locks (encrypts) your message subject, your message text, every attached file, **and each file's name** with that key, entirely within your browser. Uploaded files are given a random, meaningless name so that even the storage provider never learns what your documents are called.
 3. Looks up the public key of every recipient (and, if you've shared with an organization, the organization's public vault key).
 4. "Wraps" — encrypts — a personal copy of the message key separately for each recipient, using their own public key. This means every recipient gets their own private, individually-locked way to unlock the same message; there is no shared password or key that, if leaked, would compromise the message for everyone.
 5. Uploads the encrypted message, the encrypted attachments, and each recipient's individually wrapped key to SecureShare's servers. The server only ever stores scrambled data — never the readable content.
@@ -275,7 +279,7 @@ Behind the scenes, the moment you click Send, SecureShare:
 
 ## 8.3 Sending Limits
 
-To protect against abuse and accidental mass-sending, SecureShare limits each user to **20 outgoing messages per hour**. If you hit this limit, you'll see a clear notification, and you can resume sending once the hour-long window resets.
+To protect against abuse and accidental mass-sending, SecureShare limits each user to **20 outgoing messages per minute**. Normal use will never reach this — it exists to stop a script, not a person. If you do hit it, you'll see a notification and can send again once the minute is up.
 
 ---
 
@@ -283,7 +287,11 @@ To protect against abuse and accidental mass-sending, SecureShare limits each us
 
 ## 9.1 Opening and Decrypting a Message
 
-Click any message in your Message List to open it. Encrypted content is not shown automatically — click **Decrypt** to unlock it. If your vault is currently locked, you may be asked to enter your Master Password first. Once decrypted, the message text and any attachments become viewable and downloadable for the remainder of your session.
+Click any message in your Message List to open it. Encrypted content is not shown automatically — click **Decrypt** to unlock it. If your vault is currently locked, you may be asked to enter your Master Password first.
+
+Until you decrypt, an attached file shows only a padlock and the label *"Encrypted file name"*. The real name appears once the message is unlocked, because the name is encrypted along with the file's contents — a document called `Redundancy List Q3.xlsx` gives away a great deal on its own, so SecureShare treats the name as being just as sensitive as what is inside.
+
+Once decrypted, the message text and any attachments become viewable and downloadable for the remainder of your session.
 
 ## 9.2 Replying
 
@@ -323,8 +331,9 @@ In your **Inbox**, a one-click **"Mark all as read"** button is available in the
 
 When composing a message, you can optionally set an **expiry period**, measured in days. Once a message passes its expiry date:
 
+- It disappears from every inbox, archive, and vault view.
 - It can no longer be decrypted by recipients — attempting to open it will show a clear "this message has expired" notice instead of its contents.
-- Any attached files are similarly marked as expired and become unavailable.
+- Its attached files are permanently deleted from storage by a scheduled cleanup task. This is not simply a flag that hides them: the encrypted bytes are removed, so the file cannot be recovered by anyone afterwards, SecureShare included.
 
 This is useful for time-sensitive material — for example, a document that should only be accessible during the life of a transaction, or credentials that should automatically become inert after a short window. If no expiry is set, a message remains accessible indefinitely (subject to it not being deleted).
 
@@ -450,6 +459,8 @@ Once set up, senders can choose to share a message with the receiving organizati
 
 This is particularly valuable for cross-organization collaboration, ensuring that institutional knowledge isn't lost if a specific individual recipient leaves the organization or is unavailable.
 
+**Vault access is recorded.** Because the vault lets an Owner or Admin read messages they were never a named recipient of, every such decryption is written to the Audit Log with the administrator's identity, the message, and the time. The vault is a legitimate continuity tool, not a silent back door, and the log is what keeps that distinction meaningful.
+
 ---
 
 # 19. Audit Logs
@@ -458,7 +469,8 @@ Owners and Admins have access to a dedicated **Audit Log** page, providing an im
 
 - Messages sent, including when a message is sent to a different (external) organization.
 - Documents/files viewed across an organizational boundary.
-- User sign-ins.
+- Messages and files decrypted through the Organization Vault by an Owner or Admin who was not a named recipient.
+- User sign-ins, recorded with the originating IP address and browser.
 - Completed onboarding events.
 - Master Password resets.
 

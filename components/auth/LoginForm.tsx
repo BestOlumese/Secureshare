@@ -73,14 +73,14 @@ export default function LoginForm() {
         type: "sign-in",
       });
       if (error) {
-        toast.error(error.message || "Failed to send OTP");
+        toast.error(error.message || "Couldn't send the code.");
       } else {
         setEmail(data.email);
         setStep("otp");
-        toast.success("Verification code sent!");
+        toast.success("Code sent");
       }
     } catch {
-      toast.error("Something went wrong. Please try again.");
+      toast.error("Something went wrong. Try again.");
     } finally {
       setIsLoading(false);
     }
@@ -94,13 +94,13 @@ export default function LoginForm() {
         otp: data.code,
       });
       if (error) {
-        toast.error(error.message || "Invalid or expired code");
+        toast.error(error.message || "That code is wrong or expired.");
       } else {
-        toast.success("Welcome to SecureShare!");
+        toast.success("Welcome back");
         window.location.href = "/onboarding";
       }
     } catch {
-      toast.error("Authentication failed. Please try again.");
+      toast.error("Couldn't sign you in. Try again.");
     } finally {
       setIsLoading(false);
     }
@@ -121,7 +121,7 @@ export default function LoginForm() {
                 <ShieldCheck className="h-5 w-5" />
               </div>
               <h1 className="text-2xl font-bold text-gray-900 mb-1">Sign in</h1>
-              <p className="text-sm text-gray-500">Enter your email to receive a secure login code.</p>
+              <p className="text-sm text-gray-500">We&apos;ll email you a code.</p>
             </div>
 
             <form onSubmit={emailForm.handleSubmit(onEmailSubmit)} className="space-y-4">
@@ -134,7 +134,7 @@ export default function LoginForm() {
                     type="email"
                     placeholder="name@company.com"
                     autoFocus
-                    className="w-full rounded-xl border border-gray-200 bg-white py-3 pl-10 pr-4 text-gray-900 placeholder:text-gray-400 focus:border-blue-400 focus:outline-none focus:ring-2 focus:ring-blue-500/10 transition-all"
+                    className="w-full rounded-lg border border-gray-200 bg-white py-3 pl-10 pr-4 text-gray-900 placeholder:text-gray-400 focus:border-blue-400 focus:outline-none focus:ring-2 focus:ring-blue-500/10 transition-all"
                   />
                 </div>
                 {emailForm.formState.errors.email && (
@@ -145,7 +145,7 @@ export default function LoginForm() {
               <button
                 type="submit"
                 disabled={isLoading}
-                className="w-full flex items-center justify-center gap-2 rounded-xl bg-blue-600 px-6 py-3 text-sm font-bold text-white hover:bg-blue-700 transition-colors disabled:opacity-60 group"
+                className="w-full flex items-center justify-center gap-2 rounded-lg bg-blue-600 px-6 py-3 text-sm font-bold text-white hover:bg-blue-700 transition-colors disabled:opacity-60 group"
               >
                 {isLoading ? (
                   <Loader2 className="h-4 w-4 animate-spin" />

@@ -6,14 +6,19 @@ import { X, ShieldAlert, Lock, Key, Loader2, CheckCircle2, Eye, EyeOff, Copy, Do
 import { decryptPrivateKeyFromSync, encryptPrivateKeyForSync, generateRecoveryKey, encryptPrivateKeyWithRecoveryKey } from "@/lib/crypto-client";
 import { resetMasterPassword } from "@/app/actions/security-actions";
 import { toast } from "sonner";
+import { useModalA11y } from "@/lib/use-modal-a11y";
+import { assessPassword } from "@/lib/password-strength";
+import PasswordStrengthMeter from "@/components/auth/PasswordStrengthMeter";
+import type { CurrentUser } from "@/lib/types";
 
 interface ResetPasswordModalProps {
   isOpen: boolean;
   onClose: () => void;
-  user: any;
+  user: CurrentUser;
 }
 
 export default function ResetPasswordModal({ isOpen, onClose, user }: ResetPasswordModalProps) {
+  const dialogRef = useModalA11y<HTMLDivElement>(isOpen, onClose);
   const [step, setStep] = useState<1 | 2 | 3>(1);
   const [recoveryKey, setRecoveryKey] = useState("");
   const [newPassword, setNewPassword] = useState("");
@@ -26,18 +31,32 @@ export default function ResetPasswordModal({ isOpen, onClose, user }: ResetPassw
 
   const handleVerifyRecoveryKey = async () => {
     if (!recoveryKey) return;
+    // An account onboarded before emergency recovery existed has no blob to
+    // verify against — say so rather than failing as "invalid key".
+    if (!user.recoveryEncryptedPrivateKey || !user.recoverySalt || !user.recoveryIV) {
+      toast.error("No recovery key on this account.");
+      return;
+    }
     setIsLoading(true);
     try {
-      const buffer = await decryptPrivateKeyFromSync(user.recoveryEncryptedPrivateKey, recoveryKey, user.recoverySalt, user.recoveryIV);
+      const buffer = await decryptPrivateKeyFromSync(user.recoveryEncryptedPrivateKey, recoveryKey, user.recoverySalt, user.recoveryIV, user.kdfIterations);
       setPrivateKeyBuffer(buffer);
       setStep(2);
-      toast.success("Recovery key verified.");
-    } catch { toast.error("Invalid recovery key."); }
+      toast.success("Verified");
+    } catch { toast.error("That recovery key doesn't match."); }
     finally { setIsLoading(false); }
   };
 
+  const passwordCheck = assessPassword(newPassword);
+
   const handleResetPassword = async () => {
     if (!newPassword || !privateKeyBuffer) return;
+    // Guarded here as well as on the button: this is the only enforcement
+    // point, since the password is never sent to the server.
+    if (!passwordCheck.acceptable) {
+      toast.error("Pick a stronger password.");
+      return;
+    }
     setIsLoading(true);
     try {
       const syncInfo = await encryptPrivateKeyForSync(privateKeyBuffer, newPassword);
@@ -51,9 +70,11 @@ export default function ResetPasswordModal({ isOpen, onClose, user }: ResetPassw
         recoveryEncryptedPrivateKey: recoveryInfo.encryptedKey,
         recoverySalt: recoveryInfo.salt,
         recoveryIV: recoveryInfo.iv,
+        // Both blobs are freshly derived, so they share the current count.
+        kdfIterations: syncInfo.iterations,
       });
-      if (result.success) { setStep(3); toast.success("Master password reset!"); }
-    } catch { toast.error("Failed to reset password. Please try again."); }
+      if (result.success) { setStep(3); toast.success("Password changed"); }
+    } catch { toast.error("Couldn't reset your password. Try again."); }
     finally { setIsLoading(false); }
   };
 
@@ -72,15 +93,15 @@ export default function ResetPasswordModal({ isOpen, onClose, user }: ResetPassw
       {isOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
           <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={onClose} className="absolute inset-0 bg-black/40 backdrop-blur-sm" />
-          <motion.div initial={{ opacity: 0, scale: 0.95, y: 20 }} animate={{ opacity: 1, scale: 1, y: 0 }} exit={{ opacity: 0, scale: 0.95, y: 20 }} className="relative w-full max-w-md rounded-2xl border border-gray-200 bg-white shadow-xl overflow-hidden">
+          <motion.div ref={dialogRef} role="dialog" aria-modal="true" aria-labelledby="reset-password-title" tabIndex={-1} initial={{ opacity: 0, scale: 0.95, y: 20 }} animate={{ opacity: 1, scale: 1, y: 0 }} exit={{ opacity: 0, scale: 0.95, y: 20 }} className="relative w-full max-w-md rounded-xl border border-gray-200 bg-white shadow-xl overflow-hidden outline-none">
             <div className="p-6 border-b border-gray-100 flex items-center justify-between">
               <div className="flex items-center gap-3">
                 <div className="h-9 w-9 rounded-xl bg-blue-50 text-blue-600 flex items-center justify-center">
                   <Fingerprint className="h-5 w-5" />
                 </div>
-                <h2 className="text-base font-bold text-gray-900">Reset Master Password</h2>
+                <h2 id="reset-password-title" className="text-base font-bold text-gray-900">Reset your password</h2>
               </div>
-              <button onClick={onClose} className="text-gray-400 hover:text-gray-700 transition-colors">
+              <button onClick={onClose} aria-label="Close reset password" className="text-gray-400 hover:text-gray-700 transition-colors">
                 <X className="h-5 w-5" />
               </button>
             </div>
@@ -88,13 +109,13 @@ export default function ResetPasswordModal({ isOpen, onClose, user }: ResetPassw
             <div className="p-6 space-y-5">
               {step === 1 && (
                 <>
-                  <p className="text-xs font-bold text-blue-600 uppercase tracking-widest">Step 1 — Verify Ownership</p>
-                  <p className="text-sm text-gray-500">Enter your Emergency Recovery Key to prove you own this vault.</p>
+                  <p className="text-xs font-bold text-blue-600">Step 1 — Prove it&apos;s you</p>
+                  <p className="text-sm text-gray-500">Enter the recovery key you saved at setup.</p>
                   <div className="relative">
                     <Key className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400" />
                     <input type="text" value={recoveryKey} onChange={(e) => setRecoveryKey(e.target.value)} placeholder="Enter Recovery Key" className={inputClass} />
                   </div>
-                  <button onClick={handleVerifyRecoveryKey} disabled={isLoading || !recoveryKey} className="w-full flex items-center justify-center gap-2 rounded-xl bg-blue-600 py-3 text-sm font-bold text-white hover:bg-blue-700 transition-colors disabled:opacity-60">
+                  <button onClick={handleVerifyRecoveryKey} disabled={isLoading || !recoveryKey} className="w-full flex items-center justify-center gap-2 rounded-lg bg-blue-600 py-3 text-sm font-bold text-white hover:bg-blue-700 transition-colors disabled:opacity-60">
                     {isLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : "Verify Recovery Key"}
                   </button>
                 </>
@@ -102,16 +123,17 @@ export default function ResetPasswordModal({ isOpen, onClose, user }: ResetPassw
 
               {step === 2 && (
                 <>
-                  <p className="text-xs font-bold text-blue-600 uppercase tracking-widest">Step 2 — Set New Password</p>
-                  <p className="text-sm text-gray-500">Set a new Master Security Password. Your vault will be re-encrypted.</p>
+                  <p className="text-xs font-bold text-blue-600">Step 2 — New password</p>
+                  <p className="text-sm text-gray-500">Your keys get re-encrypted with it.</p>
                   <div className="relative">
                     <Lock className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400" />
                     <input type={showPassword ? "text" : "password"} value={newPassword} onChange={(e) => setNewPassword(e.target.value)} placeholder="New Master Password" className={`${inputClass} pr-12`} />
-                    <button type="button" onClick={() => setShowPassword(!showPassword)} className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-700">
+                    <button type="button" onClick={() => setShowPassword(!showPassword)} aria-label={showPassword ? "Hide password" : "Show password"} className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-700">
                       {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
                     </button>
                   </div>
-                  <button onClick={handleResetPassword} disabled={isLoading || !newPassword} className="w-full flex items-center justify-center gap-2 rounded-xl bg-blue-600 py-3 text-sm font-bold text-white hover:bg-blue-700 transition-colors disabled:opacity-60">
+                  <PasswordStrengthMeter password={newPassword} />
+                  <button onClick={handleResetPassword} disabled={isLoading || !passwordCheck.acceptable} className="w-full flex items-center justify-center gap-2 rounded-lg bg-blue-600 py-3 text-sm font-bold text-white hover:bg-blue-700 transition-colors disabled:opacity-60">
                     {isLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : "Reset Password"}
                   </button>
                 </>
@@ -119,21 +141,21 @@ export default function ResetPasswordModal({ isOpen, onClose, user }: ResetPassw
 
               {step === 3 && (
                 <div className="text-center space-y-5">
-                  <div className="h-14 w-14 rounded-2xl bg-emerald-50 flex items-center justify-center mx-auto">
+                  <div className="h-14 w-14 rounded-xl bg-emerald-50 flex items-center justify-center mx-auto">
                     <CheckCircle2 className="h-7 w-7 text-emerald-500" />
                   </div>
                   <div>
                     <h3 className="text-lg font-bold text-gray-900 mb-1">Password Reset</h3>
-                    <p className="text-sm text-gray-500">Your old recovery key is now invalid. Download your new one below.</p>
+                    <p className="text-sm text-gray-500">Your old recovery key no longer works. Save the new one.</p>
                   </div>
                   <div className="flex items-center gap-2 rounded-xl border border-gray-200 bg-gray-50 p-3 font-mono text-xs text-blue-600 break-all">
                     <span className="flex-1 select-all">{newRecoveryKey}</span>
-                    <button onClick={() => { navigator.clipboard.writeText(newRecoveryKey); toast.success("Copied!"); }} className="p-1.5 rounded border border-gray-200 text-gray-400 hover:text-gray-700 shrink-0">
+                    <button onClick={() => { navigator.clipboard.writeText(newRecoveryKey); toast.success("Copied"); }} className="p-1.5 rounded border border-gray-200 text-gray-400 hover:text-gray-700 shrink-0">
                       <Copy className="h-3.5 w-3.5" />
                     </button>
                   </div>
                   <div className="flex gap-3">
-                    <button onClick={downloadNewRecoveryKey} className="flex-1 flex items-center justify-center gap-2 rounded-xl border border-gray-200 py-3 text-sm font-semibold text-gray-700 hover:bg-gray-50 transition-colors">
+                    <button onClick={downloadNewRecoveryKey} className="flex-1 flex items-center justify-center gap-2 rounded-lg border border-gray-200 py-3 text-sm font-semibold text-gray-700 hover:bg-gray-50 transition-colors">
                       <Download className="h-4 w-4" /> Download
                     </button>
                     <button onClick={() => window.location.reload()} className="flex-1 rounded-xl bg-blue-600 py-3 text-sm font-bold text-white hover:bg-blue-700 transition-colors">

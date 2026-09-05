@@ -18,8 +18,8 @@ export default function LogoutButton() {
           },
         },
       });
-    } catch (error) {
-      toast.error("Failed to log out");
+    } catch {
+      toast.error("Couldn't sign you out.");
     } finally {
       setIsLoading(false);
     }
@@ -29,7 +29,7 @@ export default function LogoutButton() {
     <button
       onClick={handleLogout}
       disabled={isLoading}
-      className="flex w-full items-center justify-center gap-2 rounded-xl border border-red-100 bg-red-50 py-3 text-sm font-semibold text-red-500 hover:bg-red-500 hover:text-white hover:border-red-500 transition-all"
+      className="flex w-full items-center justify-center gap-2 rounded-lg border border-red-100 bg-red-50 py-3 text-sm font-semibold text-red-500 hover:bg-red-500 hover:text-white hover:border-red-500 transition-all"
     >
       {isLoading ? (
         <Loader2 className="h-5 w-5 animate-spin" />

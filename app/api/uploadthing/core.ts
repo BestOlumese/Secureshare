@@ -11,7 +11,7 @@ export const ourFileRouter = {
     pdf: { maxFileSize: "64MB", maxFileCount: 10 },
     video: { maxFileSize: "128MB", maxFileCount: 10 },
   })
-    .middleware(async ({ req }) => {
+    .middleware(async () => {
       const session = await auth.api.getSession({
         headers: await headers(),
       });

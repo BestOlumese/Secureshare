@@ -12,6 +12,7 @@ export async function resetMasterPassword(data: {
   recoveryEncryptedPrivateKey: string;
   recoverySalt: string;
   recoveryIV: string;
+  kdfIterations: number;
 }) {
   const session = await auth.api.getSession({
     headers: await headers(),
@@ -31,6 +32,7 @@ export async function resetMasterPassword(data: {
       recoveryEncryptedPrivateKey: data.recoveryEncryptedPrivateKey,
       recoverySalt: data.recoverySalt,
       recoveryIV: data.recoveryIV,
+      kdfIterations: data.kdfIterations,
     },
   });
 

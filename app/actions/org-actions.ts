@@ -4,11 +4,27 @@ import { prisma } from "@/lib/db";
 import { auth } from "@/lib/auth";
 import { headers } from "next/headers";
 import { transporter } from "@/lib/mailer";
+import { limitAction } from "@/lib/rate-limit";
+import type { Prisma } from "@/generated/prisma/client";
+
+/**
+ * Server actions are public HTTP endpoints, so every one that reads directory
+ * data must confirm a session first — otherwise anyone can enumerate
+ * organizations and probe which emails are registered.
+ */
+async function requireSession() {
+  const session = await auth.api.getSession({ headers: await headers() });
+  if (!session) throw new Error("Unauthorized");
+  return session;
+}
 
 /**
  * Searches for organizations by name.
  */
 export async function searchOrganizations(query: string) {
+  const session = await requireSession();
+  // Typeahead: fires per keystroke, so this only catches scripted abuse.
+  limitAction("searchOrganizations", session.user.id, 120, 60 * 1000);
   if (!query || query.length < 2) return [];
   
   return await prisma.organization.findMany({
@@ -38,8 +54,11 @@ export async function inviteUserToOrg(email: string, role: "ADMIN" | "USER") {
   
   // Guard: Only OWNER or ADMIN can invite
   if (session.user.role !== "OWNER" && session.user.role !== "ADMIN") {
-    throw new Error("Only owners and admins can invite users.");
+    throw new Error("Only owners and admins can invite.");
   }
+
+  // Every invite sends mail from our domain — throttle to protect deliverability.
+  limitAction("inviteUserToOrg", session.user.id, 10, 60 * 60 * 1000);
 
   const organization = await prisma.organization.findUnique({
     where: { id: session.user.orgId },
@@ -49,7 +68,7 @@ export async function inviteUserToOrg(email: string, role: "ADMIN" | "USER") {
   // Check if already invited or member
   const existingUser = await prisma.user.findUnique({ where: { email: email.toLowerCase() } });
   if (existingUser?.orgId === session.user.orgId) {
-    throw new Error("User is already a member of this organization.");
+    throw new Error("They're already in your organization.");
   }
 
   // Upsert invitation
@@ -77,15 +96,15 @@ export async function inviteUserToOrg(email: string, role: "ADMIN" | "USER") {
 
   // Send invitation email
   await transporter.sendMail({
-    from: `"SecureMail" <${process.env.SMTP_USER}>`,
+    from: `"SecureShare" <${process.env.SMTP_USER}>`,
     to: email,
-    subject: `Invitation to join ${organization?.name} on SecureMail`,
+    subject: `${session.user.name} invited you to ${organization?.name}`,
     html: `
       <div style="font-family: sans-serif; padding: 40px; color: #1e293b; background-color: #f8fafc;">
         <div style="max-width: 600px; margin: 0 auto; background: white; padding: 40px; border-radius: 24px; box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1);">
-          <h2 style="color: #0ea5e9; font-size: 24px; font-weight: 800; margin-bottom: 16px;">SecureMail Invitation</h2>
-          <p style="font-size: 16px; line-height: 24px;">${session.user.name} has invited you to join <strong>${organization?.name}</strong> as a <strong>${role}</strong>.</p>
-          <p style="font-size: 14px; color: #64748b; margin-bottom: 32px;">Please log in or sign up with this email address to accept your invitation and join the secure vault.</p>
+          <h2 style="color: #0ea5e9; font-size: 24px; font-weight: 800; margin-bottom: 16px;">SecureShare</h2>
+          <p style="font-size: 16px; line-height: 24px;"><strong>${session.user.name}</strong> invited you to join <strong>${organization?.name}</strong> as ${role === "ADMIN" ? "an admin" : "a member"}.</p>
+          <p style="font-size: 14px; color: #64748b; margin-bottom: 32px;">Sign in with this email address to accept. It takes a couple of minutes to set up.</p>
           <a href="${process.env.BETTER_AUTH_URL}/invite/${invitation.id}" style="display: inline-block; background: #2563eb; color: white; padding: 14px 28px; text-decoration: none; border-radius: 12px; font-weight: bold; font-size: 14px;">Accept Invitation</a>
         </div>
       </div>
@@ -110,7 +129,7 @@ export async function revokeInvitation(invitationId: string) {
   });
 
   if (!invitation || invitation.orgId !== session.user.orgId) {
-    throw new Error("Invitation not found.");
+    throw new Error("That invitation doesn't exist.");
   }
 
   // Guard: Only OWNER or ADMIN can revoke
@@ -141,7 +160,7 @@ export async function updateMemberRole(userId: string, newRole: "ADMIN" | "USER"
   });
 
   if (!targetUser || targetUser.orgId !== session.user.orgId) {
-    throw new Error("User not found in organization.");
+    throw new Error("They're not in your organization.");
   }
 
   // Guard: Only OWNER or ADMIN can update roles
@@ -151,12 +170,12 @@ export async function updateMemberRole(userId: string, newRole: "ADMIN" | "USER"
 
   // Guard: Admin cannot update other Admins
   if (session.user.role === "ADMIN" && targetUser.role === "ADMIN") {
-    throw new Error("Admins cannot change roles of other admins.");
+    throw new Error("Admins can't change other admins.");
   }
 
   // Guard: Cannot demote OWNER
   if (targetUser.role === "OWNER") {
-    throw new Error("The organization owner's role cannot be changed.");
+    throw new Error("You can't change the owner's role.");
   }
 
   await prisma.user.update({
@@ -182,7 +201,7 @@ export async function removeMember(userId: string) {
   });
 
   if (!targetUser || targetUser.orgId !== session.user.orgId) {
-    throw new Error("User not found in organization.");
+    throw new Error("They're not in your organization.");
   }
 
   // Guard: Only OWNER or ADMIN can remove
@@ -192,12 +211,12 @@ export async function removeMember(userId: string) {
 
   // Guard: Admin cannot remove other Admins
   if (session.user.role === "ADMIN" && targetUser.role === "ADMIN") {
-    throw new Error("Admins cannot remove other admins.");
+    throw new Error("Admins can't remove other admins.");
   }
   
   // Guard: Cannot remove OWNER
   if (targetUser.role === "OWNER") {
-    throw new Error("The owner cannot be removed from the organization.");
+    throw new Error("You can't remove the owner.");
   }
 
   await prisma.user.update({
@@ -253,7 +272,7 @@ export async function updateOrganization(data: { name: string }) {
   });
 
   if (existing && existing.id !== session.user.orgId) {
-    throw new Error("Organization name already exists.");
+    throw new Error("That name is taken.");
   }
 
   await prisma.organization.update({
@@ -266,6 +285,9 @@ export async function updateOrganization(data: { name: string }) {
 
 /**
  * Looks up an invitation by ID for the accept page.
+ * Intentionally unauthenticated: the accept page renders this for signed-out
+ * invitees. The cuid invitation ID is the bearer token, and it only reveals
+ * details the link holder already has.
  */
 export async function getInvitationById(invitationId: string) {
   const invitation = await prisma.invitation.findUnique({
@@ -292,7 +314,7 @@ export async function acceptInvitation(
 ): Promise<{ success: boolean; error?: string; needsLogin?: boolean; orgName?: string }> {
   const session = await auth.api.getSession({ headers: await headers() });
   if (!session) {
-    return { success: false, needsLogin: true, error: "You must be signed in to accept an invitation." };
+    return { success: false, needsLogin: true, error: "Sign in to accept." };
   }
 
   const invitation = await prisma.invitation.findUnique({
@@ -300,11 +322,11 @@ export async function acceptInvitation(
     include: { organization: { select: { name: true } } },
   });
 
-  if (!invitation) return { success: false, error: "Invitation not found." };
+  if (!invitation) return { success: false, error: "That invitation doesn't exist." };
   if (invitation.status !== "PENDING") return { success: false, error: "This invitation is no longer valid." };
   if (invitation.expiresAt < new Date()) return { success: false, error: "This invitation has expired." };
   if (invitation.email.toLowerCase() !== session.user.email.toLowerCase()) {
-    return { success: false, error: "This invitation was sent to a different email address." };
+    return { success: false, error: "This invitation was sent to a different address." };
   }
 
   await prisma.$transaction([
@@ -325,6 +347,9 @@ export async function acceptInvitation(
  * Gets a user's organization name by their email.
  */
 export async function getRecipientOrg(email: string) {
+  const session = await requireSession();
+  limitAction("getRecipientOrg", session.user.id, 120, 60 * 1000);
+
   const user = await prisma.user.findUnique({
     where: { email: email.toLowerCase() },
     select: {
@@ -346,10 +371,11 @@ export async function saveOrgKeys(data: {
   encryptedPrivateKey: string;
   salt: string;
   iv: string;
+  iterations: number;
 }) {
   const session = await auth.api.getSession({ headers: await headers() });
   if (!session?.user.orgId) throw new Error("Unauthorized");
-  if (session.user.role !== "OWNER") throw new Error("Only the org owner can generate org keys.");
+  if (session.user.role !== "OWNER") throw new Error("Only the owner can do this.");
 
   await prisma.organization.update({
     where: { id: session.user.orgId },
@@ -358,6 +384,7 @@ export async function saveOrgKeys(data: {
       encryptedPrivateKey: data.encryptedPrivateKey,
       privateKeySalt: data.salt,
       privateKeyIV: data.iv,
+      kdfIterations: data.iterations,
     },
   });
 
@@ -368,6 +395,8 @@ export async function saveOrgKeys(data: {
  * Returns the org's public key by org ID (used during message composition).
  */
 export async function getOrgPublicKey(orgId: string) {
+  await requireSession();
+
   const org = await prisma.organization.findUnique({
     where: { id: orgId },
     select: { publicKey: true },
@@ -382,20 +411,26 @@ export async function getOrgKeySyncInfo() {
   const session = await auth.api.getSession({ headers: await headers() });
   if (!session?.user.orgId) throw new Error("Unauthorized");
   if (session.user.role !== "OWNER" && session.user.role !== "ADMIN") {
-    throw new Error("Only org admins can access org vault keys.");
+    throw new Error("Admins only.");
   }
 
   const org = await prisma.organization.findUnique({
     where: { id: session.user.orgId },
-    select: { encryptedPrivateKey: true, privateKeySalt: true, privateKeyIV: true },
+    select: {
+      encryptedPrivateKey: true,
+      privateKeySalt: true,
+      privateKeyIV: true,
+      kdfIterations: true,
+    },
   });
 
-  if (!org?.encryptedPrivateKey) throw new Error("Org vault keys not configured.");
+  if (!org?.encryptedPrivateKey) throw new Error("Your organization hasn't set up a key yet.");
 
   return {
     encryptedPrivateKey: org.encryptedPrivateKey,
     salt: org.privateKeySalt!,
     iv: org.privateKeyIV!,
+    kdfIterations: org.kdfIterations,
   };
 }
 
@@ -417,6 +452,8 @@ export async function getOrgKeyStatus() {
  * Gets organizations for multiple emails.
  */
 export async function getRecipientsOrgs(emails: string[]) {
+  await requireSession();
+
   const users = await prisma.user.findMany({
     where: {
       email: {
@@ -435,39 +472,131 @@ export async function getRecipientsOrgs(emails: string[]) {
 }
 
 /**
- * Returns paginated audit logs for admins (scoped to their org).
+ * Filters for the audit log. Applied in the database, not in the browser:
+ * filtering a page of 50 rows and calling it a search gives a confidently
+ * wrong answer, which is the one thing an audit tool must not do.
  */
-export async function getAuditLogs(params: { cursor?: string; limit?: number } = {}) {
+export interface AuditLogFilters {
+  cursor?: string;
+  limit?: number;
+  /** Matches user name, email, or action type. */
+  search?: string;
+  /** Exact action type, or undefined for all. */
+  actionType?: string;
+  /** Only events at or after this moment. */
+  since?: Date;
+}
+
+/** Builds the shared `where` clause so listing, counting and export agree. */
+function auditLogWhere(
+  orgId: string,
+  userId: string,
+  filters: AuditLogFilters
+): Prisma.AuditLogWhereInput {
+  const and: Prisma.AuditLogWhereInput[] = [
+    {
+      OR: [
+        { initiatorOrgId: orgId },
+        { targetOrgId: orgId },
+        { userId },
+      ],
+    },
+  ];
+
+  if (filters.actionType) {
+    and.push({ actionType: filters.actionType });
+  }
+  if (filters.since) {
+    and.push({ timestamp: { gte: filters.since } });
+  }
+
+  const search = filters.search?.trim();
+  if (search) {
+    and.push({
+      OR: [
+        { user: { name: { contains: search, mode: "insensitive" } } },
+        { user: { email: { contains: search, mode: "insensitive" } } },
+        { actionType: { contains: search, mode: "insensitive" } },
+      ],
+    });
+  }
+
+  return { AND: and };
+}
+
+async function requireAuditAccess() {
   const session = await auth.api.getSession({ headers: await headers() });
   if (!session?.user.orgId) throw new Error("Unauthorized");
   if (session.user.role !== "OWNER" && session.user.role !== "ADMIN") {
-    throw new Error("Only org admins can view audit logs.");
+    throw new Error("Admins only.");
   }
+  return { orgId: session.user.orgId, userId: session.user.id };
+}
 
-  const limit = params.limit ?? 50;
+/**
+ * Returns paginated audit logs for admins (scoped to their org), plus the
+ * total number of matches so the UI can say how much it is actually showing.
+ */
+export async function getAuditLogs(filters: AuditLogFilters = {}) {
+  const { orgId, userId } = await requireAuditAccess();
+
+  const limit = Math.min(filters.limit ?? 50, 100);
+  const where = auditLogWhere(orgId, userId, filters);
+
+  const [logs, total] = await Promise.all([
+    prisma.auditLog.findMany({
+      where,
+      include: { user: { select: { name: true, email: true } } },
+      orderBy: { timestamp: "desc" },
+      take: limit,
+      ...(filters.cursor ? { skip: 1, cursor: { id: filters.cursor } } : {}),
+    }),
+    // Only counted on the first page — paging doesn't change the total.
+    filters.cursor ? Promise.resolve(-1) : prisma.auditLog.count({ where }),
+  ]);
+
+  return {
+    total,
+    logs: logs.map((l) => ({
+      id: l.id,
+      actionType: l.actionType,
+      timestamp: l.timestamp,
+      ipAddress: l.ipAddress,
+      metadata: l.metadata,
+      initiatorOrgId: l.initiatorOrgId,
+      targetOrgId: l.targetOrgId,
+      user: l.user,
+    })),
+  };
+}
+
+/** Hard ceiling on an export, so one click can't pull an unbounded table. */
+const AUDIT_EXPORT_LIMIT = 5000;
+
+/**
+ * Returns every row matching the current filters, for CSV download.
+ */
+export async function exportAuditLogs(filters: AuditLogFilters = {}) {
+  const { orgId, userId } = await requireAuditAccess();
+  limitAction("exportAuditLogs", userId, 5, 60 * 1000);
 
   const logs = await prisma.auditLog.findMany({
-    where: {
-      OR: [
-        { initiatorOrgId: session.user.orgId },
-        { targetOrgId: session.user.orgId },
-        { userId: session.user.id },
-      ],
-    },
+    where: auditLogWhere(orgId, userId, filters),
     include: { user: { select: { name: true, email: true } } },
     orderBy: { timestamp: "desc" },
-    take: limit,
-    ...(params.cursor ? { skip: 1, cursor: { id: params.cursor } } : {}),
+    take: AUDIT_EXPORT_LIMIT,
   });
 
-  return logs.map((l) => ({
-    id: l.id,
-    actionType: l.actionType,
-    timestamp: l.timestamp,
-    ipAddress: l.ipAddress,
-    metadata: l.metadata,
-    initiatorOrgId: l.initiatorOrgId,
-    targetOrgId: l.targetOrgId,
-    user: l.user,
-  }));
+  return {
+    truncated: logs.length === AUDIT_EXPORT_LIMIT,
+    rows: logs.map((l) => ({
+      timestamp: l.timestamp.toISOString(),
+      actionType: l.actionType,
+      userName: l.user?.name ?? "",
+      userEmail: l.user?.email ?? "",
+      ipAddress: l.ipAddress ?? "",
+      crossOrg: !!l.targetOrgId && l.targetOrgId !== l.initiatorOrgId,
+      metadata: l.metadata ? JSON.stringify(l.metadata) : "",
+    })),
+  };
 }

@@ -4,6 +4,9 @@ import Features from "@/components/landing/Features";
 import CTA from "@/components/landing/CTA";
 import Footer from "@/components/landing/Footer";
 import Navbar from "@/components/landing/Navbar";
+import Transparency from "@/components/landing/Transparency";
+import Comparison from "@/components/landing/Comparison";
+import FAQ from "@/components/landing/FAQ";
 
 export default function LandingPage() {
   return (
@@ -12,6 +15,9 @@ export default function LandingPage() {
       <Hero />
       <HowItWorks />
       <Features />
+      <Transparency />
+      <Comparison />
+      <FAQ />
       <CTA />
       <Footer />
     </main>

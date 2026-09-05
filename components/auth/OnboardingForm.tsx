@@ -23,11 +23,21 @@ import {
   CheckCircle2,
 } from "lucide-react";
 import { encryptPrivateKeyForSync, generateRecoveryKey, encryptPrivateKeyWithRecoveryKey } from "@/lib/crypto-client";
+import { assessPassword, MIN_MASTER_PASSWORD_LENGTH } from "@/lib/password-strength";
+import PasswordStrengthMeter from "./PasswordStrengthMeter";
+import { getErrorMessage } from "@/lib/utils";
 
 const onboardingSchema = z.object({
-  name: z.string().min(2, "Name is too short"),
-  organizationName: z.string().min(2, "Organization name is too short"),
-  securityPassword: z.string().min(8, "Security password must be at least 8 characters"),
+  name: z.string().min(2, "Too short"),
+  organizationName: z.string().min(2, "Too short"),
+  // This password is the only thing protecting the private key against an
+  // offline guessing attack, so hold it to a real bar.
+  securityPassword: z
+    .string()
+    .min(MIN_MASTER_PASSWORD_LENGTH, `Security password must be at least ${MIN_MASTER_PASSWORD_LENGTH} characters`)
+    .refine((value) => assessPassword(value).acceptable, {
+      message: "Too easy to guess. Make it longer and mix in numbers or symbols.",
+    }),
 });
 
 type OnboardingData = z.infer<typeof onboardingSchema>;
@@ -51,6 +61,7 @@ export default function OnboardingForm({
     register,
     handleSubmit,
     trigger,
+    watch,
     formState: { errors },
   } = useForm<OnboardingData>({
     resolver: zodResolver(onboardingSchema),
@@ -66,12 +77,12 @@ export default function OnboardingForm({
     const publicKeyBuffer = await window.crypto.subtle.exportKey("spki", keyPair.publicKey);
     const privateKeyBuffer = await window.crypto.subtle.exportKey("pkcs8", keyPair.privateKey);
     const publicKeyBase64 = btoa(String.fromCharCode(...new Uint8Array(publicKeyBuffer)));
-    const { encryptedKey, salt, iv } = await encryptPrivateKeyForSync(privateKeyBuffer, password);
+    const { encryptedKey, salt, iv, iterations } = await encryptPrivateKeyForSync(privateKeyBuffer, password);
     const newRecoveryKey = generateRecoveryKey();
     setRecoveryKey(newRecoveryKey);
     const recoveryInfo = await encryptPrivateKeyWithRecoveryKey(privateKeyBuffer, newRecoveryKey);
     await setKey("secure-share-private-key", privateKeyBuffer);
-    return { publicKeyBase64, encryptedKey, salt, iv, recoveryEncryptedKey: recoveryInfo.encryptedKey, recoverySalt: recoveryInfo.salt, recoveryIV: recoveryInfo.iv };
+    return { publicKeyBase64, encryptedKey, salt, iv, iterations, recoveryEncryptedKey: recoveryInfo.encryptedKey, recoverySalt: recoveryInfo.salt, recoveryIV: recoveryInfo.iv };
   }
 
   async function onSubmit(data: OnboardingData) {
@@ -89,11 +100,12 @@ export default function OnboardingForm({
         recoveryEncryptedPrivateKey: keys.recoveryEncryptedKey,
         recoverySalt: keys.recoverySalt,
         recoveryIV: keys.recoveryIV,
+        kdfIterations: keys.iterations,
       });
-      if (result.success) { setStep(3); toast.success("Account secured!"); }
-      else { toast.error(("error" in result ? result.error : null) || "Security setup failed."); setStep(1); }
-    } catch (err: any) {
-      toast.error(err.message || "Security setup failed. Please try again.");
+      if (result.success) { setStep(3); toast.success("You're all set"); }
+      else { toast.error(("error" in result ? result.error : null) || "Couldn't finish setup."); setStep(1); }
+    } catch (err: unknown) {
+      toast.error(getErrorMessage(err, "Couldn't finish setup. Try again."));
       setStep(1);
     } finally {
       setIsLoading(false);
@@ -113,7 +125,7 @@ export default function OnboardingForm({
     document.body.removeChild(el);
   };
 
-  const card = "w-full max-w-md bg-white rounded-2xl border border-gray-200 shadow-sm p-8";
+  const card = "w-full max-w-md bg-white rounded-xl border border-gray-200 p-8";
 
   return (
     <div className="w-full max-w-md">
@@ -122,8 +134,7 @@ export default function OnboardingForm({
         {[1, 2, 3].map((s) => (
           <div
             key={s}
-            className={`h-1.5 rounded-full transition-all duration-300 ${
-              step >= s ? "w-8 bg-blue-600" : "w-4 bg-gray-200"
+            className={`h-1.5 rounded-full transition-all duration-300 ${ step >= s ?"w-8 bg-blue-600" : "w-4 bg-gray-200"
             }`}
           />
         ))}
@@ -135,7 +146,7 @@ export default function OnboardingForm({
           <motion.div key="step1" initial={{ opacity: 0, x: -16 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: 16 }} className={card}>
             <div className="mb-6">
               <h1 className="text-xl font-bold text-gray-900 mb-1">Create your account</h1>
-              <p className="text-sm text-gray-500">Tell us about yourself and your organization.</p>
+              <p className="text-sm text-gray-500">Your name and organization.</p>
             </div>
 
             <div className="space-y-4">
@@ -181,16 +192,16 @@ export default function OnboardingForm({
               <div className="mb-4 flex h-11 w-11 items-center justify-center rounded-xl bg-blue-50 text-blue-600">
                 <Lock className="h-5 w-5" />
               </div>
-              <h1 className="text-xl font-bold text-gray-900 mb-1">Set your security password</h1>
+              <h1 className="text-xl font-bold text-gray-900 mb-1">Set your master password</h1>
               <p className="text-sm text-gray-500">
                 This encrypts your keys for cross-device sync.{" "}
-                <span className="text-orange-500 font-semibold">Never forget it.</span>
+                <span className="text-orange-500 font-semibold">Don&apos;t lose it.</span>
               </p>
             </div>
 
             <form onSubmit={handleSubmit(onSubmit)} className="space-y-5">
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1.5">Master security password</label>
+                <label className="block text-sm font-medium text-gray-700 mb-1.5">Master password</label>
                 <div className="relative">
                   <Lock className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400" />
                   <input
@@ -203,20 +214,21 @@ export default function OnboardingForm({
                     {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
                   </button>
                 </div>
+                <PasswordStrengthMeter password={watch("securityPassword") || ""} />
                 {errors.securityPassword && <p className="mt-1 text-xs text-red-500">{errors.securityPassword.message}</p>}
               </div>
 
               <div className="rounded-xl border border-orange-200 bg-orange-50 p-4 text-sm text-orange-700 flex gap-3">
                 <ShieldAlert className="h-4 w-4 shrink-0 mt-0.5" />
-                <p>SecureShare is zero-knowledge. We cannot recover your files if you lose this password.</p>
+                <p>We can&apos;t reset this. Lose it and your messages stay locked forever.</p>
               </div>
 
               <div className="flex gap-3">
                 <button type="button" onClick={() => setStep(1)} className="w-1/3 rounded-xl border border-gray-200 bg-white py-3 text-sm font-semibold text-gray-500 hover:bg-gray-50 transition-colors">
                   Back
                 </button>
-                <button type="submit" disabled={isLoading} className="flex-1 flex items-center justify-center gap-2 rounded-xl bg-blue-600 py-3 text-sm font-bold text-white hover:bg-blue-700 transition-colors disabled:opacity-60">
-                  {isLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <><ShieldCheck className="h-4 w-4" /> Secure my account</>}
+                <button type="submit" disabled={isLoading} className="flex-1 flex items-center justify-center gap-2 rounded-lg bg-blue-600 py-3 text-sm font-bold text-white hover:bg-blue-700 transition-colors disabled:opacity-60">
+                  {isLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <><ShieldCheck className="h-4 w-4" /> Create account</>}
                 </button>
               </div>
             </form>
@@ -232,7 +244,7 @@ export default function OnboardingForm({
               </div>
               <div>
                 <h1 className="text-lg font-bold text-gray-900">Emergency recovery key</h1>
-                <p className="text-xs text-gray-500">Save this — it&apos;s your only fallback</p>
+                <p className="text-xs text-gray-500">Your only way back in if you forget your password</p>
               </div>
             </div>
 
@@ -252,7 +264,7 @@ export default function OnboardingForm({
             </div>
 
             <div className="space-y-3">
-              <button onClick={downloadRecoveryKey} className="flex w-full items-center justify-center gap-2 rounded-xl border border-gray-200 bg-white py-3 text-sm font-semibold text-gray-700 hover:bg-gray-50 transition-colors">
+              <button onClick={downloadRecoveryKey} className="flex w-full items-center justify-center gap-2 rounded-lg border border-gray-200 bg-white py-3 text-sm font-semibold text-gray-700 hover:bg-gray-50 transition-colors">
                 <Download className="h-4 w-4" />
                 Download recovery key (.txt)
               </button>
@@ -268,12 +280,12 @@ export default function OnboardingForm({
         {step === 4 && (
           <motion.div key="step4" initial={{ opacity: 0 }} animate={{ opacity: 1 }} className={`${card} text-center py-16`}>
             <div className="flex justify-center mb-6">
-              <div className="h-16 w-16 rounded-2xl bg-blue-50 flex items-center justify-center">
+              <div className="h-16 w-16 rounded-xl bg-blue-50 flex items-center justify-center">
                 <Loader2 className="h-8 w-8 text-blue-600 animate-spin" />
               </div>
             </div>
-            <h2 className="text-lg font-bold text-gray-900 mb-2">Encrypting your vault</h2>
-            <p className="text-sm text-gray-500">Generating RSA key pair and encrypting with your security password…</p>
+            <h2 className="text-lg font-bold text-gray-900 mb-2">Setting up your keys</h2>
+            <p className="text-sm text-gray-500">This takes a few seconds.</p>
           </motion.div>
         )}
 
@@ -287,7 +299,7 @@ export default function OnboardingForm({
             className={`${card} text-center py-16`}
           >
             <div className="flex justify-center mb-6">
-              <div className="h-16 w-16 rounded-2xl bg-emerald-50 flex items-center justify-center">
+              <div className="h-16 w-16 rounded-xl bg-emerald-50 flex items-center justify-center">
                 <ShieldCheck className="h-8 w-8 text-emerald-500" />
               </div>
             </div>

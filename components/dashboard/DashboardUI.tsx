@@ -2,7 +2,7 @@
 
 import { useState, useCallback, useEffect, useRef } from "react";
 import { cn } from "@/lib/utils";
-import { Search, Plus, User, Mail, Send, Building2, ShieldCheck, Archive, RefreshCw, Trash2, CheckSquare } from "lucide-react";
+import { Search, User, Mail, Send, Building2, Archive, RefreshCw, Trash2, PenLine } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import MessageList from "./MessageList";
 import MessageView from "./MessageView";
@@ -11,6 +11,10 @@ import ComposeModal from "./ComposeModal";
 import Link from "next/link";
 import { markMessageRead, fetchNewMessages, deleteMessageForUser, toggleArchiveMessage, markAllMessagesRead } from "@/app/actions/documents";
 import { toast } from "sonner";
+import Logo from "@/components/Logo";
+import { avatarColor, avatarInitial } from "@/lib/avatar";
+import { useModalA11y } from "@/lib/use-modal-a11y";
+import type { SessionUser } from "@/lib/types";
 
 export type Message = {
   id: string;
@@ -19,11 +23,17 @@ export type Message = {
   content: string | null;
   createdAt: Date;
   sender: { email: string; name: string };
-  recipients?: Array<{ user: { email: string; name: string }; role: string; readAt?: Date | null }>;
+  recipients?: Array<{
+    userId: string;
+    user: { email: string; name: string };
+    role: string;
+    readAt?: Date | null;
+  }>;
+  // No fileUrl: the blob URL is fetched via getDocumentMetadata, which is
+  // where the expiry and access checks run.
   documents: Array<{
     id: string;
     fileName: string | null;
-    fileUrl: string | null;
     fileSize: number | null;
     contentType: string | null;
   }>;
@@ -35,22 +45,22 @@ const VIEW_LABELS: Record<DashboardView, string> = {
   inbox: "Inbox",
   sent: "Sent",
   archived: "Archived",
-  vault: "Org Vault",
+  vault: "Org vault",
 };
 
 const VIEW_EMPTY: Record<DashboardView, { title: string; body: string }> = {
-  inbox: { title: "Select a message", body: "Choose a secure message from the list to read its contents." },
-  sent: { title: "Select a message", body: "View a message you sent to see its recipients and status." },
-  archived: { title: "Nothing selected", body: "Select an archived message to view or restore it." },
-  vault: { title: "Organization Vault", body: "Select a message to decrypt it using your Org Security Password." },
+  inbox: { title: "Nothing in your inbox", body: "New messages will appear here." },
+  sent: { title: "Nothing sent yet", body: "Messages you send will appear here." },
+  archived: { title: "Nothing archived", body: "Archived messages will appear here." },
+  vault: { title: "Nothing in the vault", body: "Messages shared with your organization appear here." },
 };
 
 interface DashboardUIProps {
-  user: any;
-  initialReceived: any[];
-  initialSent: any[];
-  initialArchived: any[];
-  initialOrgVault?: any[];
+  user: SessionUser;
+  initialReceived: Message[];
+  initialSent: Message[];
+  initialArchived: Message[];
+  initialOrgVault?: Message[];
 }
 
 export default function DashboardUI({
@@ -75,16 +85,21 @@ export default function DashboardUI({
   const [isMarkingAllRead, setIsMarkingAllRead] = useState(false);
   const lastRefreshRef = useRef<Date>(new Date());
 
+  const keyboardDialogRef = useModalA11y<HTMLDivElement>(!!keyboardConfirm, () => setKeyboardConfirm(null));
+  const bulkDialogRef = useModalA11y<HTMLDivElement>(!!bulkConfirm, () => setBulkConfirm(null));
+
+  const hasVault = user.role === "OWNER" || user.role === "ADMIN";
+
   const [received, setReceived] = useState<Message[]>(initialReceived);
   const [sent, setSent] = useState<Message[]>(initialSent);
   const [archived, setArchived] = useState<Message[]>(initialArchived);
-  const [orgVault] = useState<Message[]>(initialOrgVault);
+  const [orgVault, setOrgVault] = useState<Message[]>(initialOrgVault);
 
   // Track which message IDs the current user has NOT read yet (only for inbox)
   const [readIds, setReadIds] = useState<Set<string>>(() => {
     const s = new Set<string>();
-    initialReceived.forEach((m: any) => {
-      const rec = m.recipients?.find((r: any) => r.userId === user.id || r.user?.email === user.email);
+    initialReceived.forEach((m) => {
+      const rec = m.recipients?.find((r) => r.userId === user.id || r.user?.email === user.email);
       if (rec?.readAt) s.add(m.id);
     });
     return s;
@@ -104,12 +119,20 @@ export default function DashboardUI({
     view === "archived" ? archived :
     orgVault;
 
-  const filteredMessages = messages.filter(
-    (m) =>
-      m.subject?.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      m.sender.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      m.sender.email.toLowerCase().includes(searchQuery.toLowerCase())
-  );
+  // Subjects are stored encrypted, so search can only match ones this session
+  // has already decrypted — plus the sender fields, which are plaintext.
+  const query = searchQuery.trim().toLowerCase();
+  const filteredMessages = !query
+    ? messages
+    : messages.filter(
+        (m) =>
+          decryptedSubjects[m.id]?.toLowerCase().includes(query) ||
+          m.sender.name.toLowerCase().includes(query) ||
+          m.sender.email.toLowerCase().includes(query) ||
+          m.recipients?.some((r) =>
+            (r.user.name || r.user.email).toLowerCase().includes(query)
+          )
+      );
 
   const unreadIds = new Set(
     received.filter((m) => !readIds.has(m.id)).map((m) => m.id)
@@ -152,6 +175,7 @@ export default function DashboardUI({
     if (view === "inbox") setReceived((prev) => [...prev, ...newMessages]);
     else if (view === "sent") setSent((prev) => [...prev, ...newMessages]);
     else if (view === "archived") setArchived((prev) => [...prev, ...newMessages]);
+    else if (view === "vault") setOrgVault((prev) => [...prev, ...newMessages]);
     setHasMore((prev) => ({ ...prev, [view]: newMessages.length === PAGE_SIZE }));
   }
 
@@ -174,9 +198,10 @@ export default function DashboardUI({
     try {
       const after = lastRefreshRef.current.toISOString();
       lastRefreshRef.current = new Date();
-      const [newInbox, newSent] = await Promise.all([
+      const [newInbox, newSent, newVault] = await Promise.all([
         fetchNewMessages({ view: "inbox", after }),
         fetchNewMessages({ view: "sent", after }),
+        hasVault ? fetchNewMessages({ view: "vault", after }) : Promise.resolve([]),
       ]);
       if (newInbox.length > 0) {
         setReceived((prev) => [...(newInbox as Message[]), ...prev]);
@@ -185,10 +210,13 @@ export default function DashboardUI({
       if (newSent.length > 0) {
         setSent((prev) => [...(newSent as Message[]), ...prev]);
       }
+      if (newVault.length > 0) {
+        setOrgVault((prev) => [...(newVault as Message[]), ...prev]);
+      }
     } catch {} finally {
       if (!silent) setIsRefreshing(false);
     }
-  }, []);
+  }, [hasVault]);
 
   useEffect(() => {
     const interval = setInterval(() => refreshMessages(true), 30_000);
@@ -261,9 +289,9 @@ export default function DashboardUI({
     try {
       await markAllMessagesRead();
       setReadIds(new Set(received.map((m) => m.id)));
-      toast.success("All messages marked as read.");
+      toast.success("Marked as read");
     } catch {
-      toast.error("Failed to mark messages as read.");
+      toast.error("Couldn't mark as read.");
     } finally {
       setIsMarkingAllRead(false);
     }
@@ -278,7 +306,7 @@ export default function DashboardUI({
       } else {
         handleUnarchived(messageId);
       }
-    } catch { toast.error("Failed to archive message."); }
+    } catch { toast.error("Couldn't archive."); }
   }
 
   async function handleKeyboardDelete(messageId: string) {
@@ -286,14 +314,15 @@ export default function DashboardUI({
     try {
       await deleteMessageForUser(messageId);
       handleDeleted(messageId);
-      toast.success("Message deleted.");
-    } catch { toast.error("Failed to delete message."); }
+      toast.success("Deleted");
+    } catch { toast.error("Couldn't delete."); }
   }
 
   function handleToggleSelect(id: string) {
     setBulkSelectedIds((prev) => {
       const next = new Set(prev);
-      next.has(id) ? next.delete(id) : next.add(id);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
       return next;
     });
   }
@@ -317,7 +346,7 @@ export default function DashboardUI({
       if (selectedMessageId && ids.has(selectedMessageId)) setSelectedMessageId(null);
       setBulkSelectedIds(new Set());
       toast.success(`${ids.size} message${ids.size > 1 ? "s" : ""} deleted.`);
-    } catch { toast.error("Some messages could not be deleted."); }
+    } catch { toast.error("Couldn't delete some of them."); }
     finally { setIsBulkActing(false); }
   }
 
@@ -332,7 +361,7 @@ export default function DashboardUI({
       if (selectedMessageId && ids.has(selectedMessageId)) setSelectedMessageId(null);
       setBulkSelectedIds(new Set());
       toast.success(`${ids.size} message${ids.size > 1 ? "s" : ""} archived.`);
-    } catch { toast.error("Some messages could not be archived."); }
+    } catch { toast.error("Couldn't archive some of them."); }
     finally { setIsBulkActing(false); }
   }
 
@@ -347,201 +376,214 @@ export default function DashboardUI({
       if (selectedMessageId && ids.has(selectedMessageId)) setSelectedMessageId(null);
       setBulkSelectedIds(new Set());
       toast.success(`${ids.size} message${ids.size > 1 ? "s" : ""} moved to inbox.`);
-    } catch { toast.error("Some messages could not be moved."); }
+    } catch { toast.error("Couldn't move some of them."); }
     finally { setIsBulkActing(false); }
   }
 
   return (
-    <div className="flex flex-col h-screen bg-gray-50 text-gray-900 overflow-hidden font-sans">
+    <div className="flex flex-col h-screen bg-white text-gray-900 overflow-hidden font-sans">
+
+      {/* Top bar — spans the full width so search stays reachable while reading */}
+      <header className="flex items-center gap-3 sm:gap-6 border-b border-gray-200 px-4 sm:px-5 h-14 shrink-0">
+        <Link href="/dashboard" className="flex items-center gap-2 shrink-0">
+          <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-blue-600 text-white">
+            <Logo className="h-4 w-4" />
+          </div>
+          <span className="hidden sm:block font-semibold text-gray-900">SecureShare</span>
+        </Link>
+
+        <div className="relative flex-1 max-w-2xl">
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
+          <input
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            placeholder="Search messages"
+            aria-label="Search messages"
+            className="w-full rounded-lg bg-gray-100 py-2 pl-10 pr-4 text-sm placeholder:text-gray-500 focus:bg-white focus:outline-none focus:ring-2 focus:ring-blue-500/20 border border-transparent focus:border-gray-200 transition-all"
+          />
+        </div>
+
+        <div className="ml-auto flex items-center gap-1 shrink-0">
+          <button
+            onClick={() => refreshMessages(false)}
+            disabled={isRefreshing}
+            title="Check for new"
+            aria-label="Check for new messages"
+            className="flex h-9 w-9 items-center justify-center rounded-lg text-gray-500 hover:bg-gray-100 transition-colors disabled:opacity-40"
+          >
+            <RefreshCw className={cn("h-4 w-4", isRefreshing && "animate-spin")} />
+          </button>
+          <Link
+            href="/profile"
+            title="Profile"
+            className={cn(
+              "flex h-8 w-8 items-center justify-center rounded-full text-sm font-medium ml-1",
+              avatarColor(user.email || "")
+            )}
+          >
+            {avatarInitial(user.name, user.email)}
+          </Link>
+        </div>
+      </header>
+
       <div className="flex flex-1 overflow-hidden">
 
-        {/* Sidebar (Desktop) */}
         <div className="hidden md:flex">
           <Sidebar
             currentView={view}
             setView={changeView}
             user={user}
             unreadCount={unreadCount}
+            onCompose={() => setIsComposeOpen(true)}
           />
         </div>
 
-        <div className="flex flex-1 overflow-hidden relative">
+        {/* One pane: reading a message replaces the list, as in Gmail */}
+        <main className="flex flex-1 flex-col overflow-hidden">
+          {selectedMessage ? (
+            <MessageView
+              key={selectedMessage.id}
+              message={selectedMessage}
+              onClose={() => setSelectedMessageId(null)}
+              onDeleted={handleDeleted}
+              onArchived={handleArchived}
+              onUnarchived={handleUnarchived}
+              onReply={view !== "vault" && view !== "sent" ? handleReply : undefined}
+              onForward={view !== "vault" ? handleForward : undefined}
+              onSubjectDecrypted={(s) => setDecryptedSubjects(prev => ({ ...prev, [selectedMessage.id]: s }))}
+              isSentView={view === "sent"}
+              isVaultView={isVaultView}
+              isArchivedView={view === "archived"}
+            />
+          ) : (
+            <>
+              {/* List toolbar */}
+              <div className="flex items-center gap-2 px-4 sm:px-5 h-12 border-b border-gray-100 shrink-0">
+                <h1 className="text-sm font-medium text-gray-900">{VIEW_LABELS[view]}</h1>
+                {filteredMessages.length > 0 && (
+                  <span className="text-sm text-gray-400 tabular-nums">
+                    {filteredMessages.length}{hasMore[view] && !searchQuery ? "+" : ""}
+                  </span>
+                )}
 
-          {/* Message List Panel */}
-          <div
-            className={cn(
-              "flex w-full md:w-[320px] lg:w-[380px] flex-col border-r border-gray-200 bg-white shrink-0",
-              selectedMessageId ? "hidden md:flex" : "flex"
-            )}
-          >
-            <div className="px-5 py-5 border-b border-gray-100 space-y-4">
-              <div className="flex items-center justify-between">
-                <div className="flex items-baseline gap-2">
-                  <h1 className="text-xl font-bold text-gray-900">{VIEW_LABELS[view]}</h1>
-                  {filteredMessages.length > 0 && (
-                    <span className="text-xs font-bold text-gray-400 tabular-nums">
-                      {filteredMessages.length}{hasMore[view] ? "+" : ""}
-                    </span>
-                  )}
-                </div>
-                <div className="flex items-center gap-1.5">
+                <div className="ml-auto flex items-center gap-2">
                   {view === "inbox" && unreadCount > 0 && (
                     <button
                       onClick={handleMarkAllRead}
                       disabled={isMarkingAllRead}
-                      title="Mark all as read"
-                      className="flex h-9 items-center justify-center rounded-xl border border-gray-200 px-2.5 text-xs font-bold text-gray-400 hover:text-gray-700 hover:bg-gray-100 transition-all disabled:opacity-40 gap-1.5"
+                      className="rounded-lg px-2.5 py-1.5 text-sm text-gray-500 hover:bg-gray-100 hover:text-gray-900 transition-colors disabled:opacity-40"
                     >
-                      <Mail className="h-3.5 w-3.5" />
-                      <span className="hidden lg:inline">All read</span>
+                      Mark all read
                     </button>
                   )}
-                  <button
-                    onClick={() => refreshMessages(false)}
-                    disabled={isRefreshing}
-                    title="Check for new messages"
-                    className="flex h-9 w-9 items-center justify-center rounded-xl border border-gray-200 text-gray-400 hover:text-gray-700 hover:bg-gray-100 transition-all disabled:opacity-40"
-                  >
-                    <RefreshCw className={cn("h-4 w-4", isRefreshing && "animate-spin")} />
-                  </button>
-                  <button
-                    onClick={() => setIsComposeOpen(true)}
-                    className="flex h-9 w-9 items-center justify-center rounded-xl bg-blue-600 text-white hover:bg-blue-700 transition-all shadow-sm shadow-blue-600/30 hover:scale-105 active:scale-95"
-                  >
-                    <Plus className="h-4 w-4" />
-                  </button>
                 </div>
-              </div>
-
-              <div className="relative">
-                <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-gray-400" />
-                <input
-                  value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)}
-                  placeholder="Search..."
-                  className="w-full rounded-xl border border-gray-200 bg-gray-50 py-2 pl-9 pr-4 text-sm focus:border-blue-400 focus:outline-none focus:ring-2 focus:ring-blue-500/10 placeholder:text-gray-400 transition-all"
-                />
               </div>
 
               {/* Bulk action toolbar */}
               <AnimatePresence>
                 {bulkSelectedIds.size > 0 && (
                   <motion.div
-                    initial={{ opacity: 0, y: -6 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    exit={{ opacity: 0, y: -6 }}
-                    className="flex items-center justify-between bg-blue-50 border border-blue-200 rounded-xl px-3 py-2"
+                    initial={{ opacity: 0, height: 0 }}
+                    animate={{ opacity: 1, height: "auto" }}
+                    exit={{ opacity: 0, height: 0 }}
+                    className="overflow-hidden border-b border-blue-100 bg-blue-50 shrink-0"
                   >
-                    <button onClick={handleSelectAll} className="flex items-center gap-1.5 text-xs font-bold text-blue-700">
-                      <CheckSquare className="h-3.5 w-3.5" />
-                      {bulkSelectedIds.size} selected
-                    </button>
-                    <div className="flex items-center gap-2">
-                      {view === "archived" ? (
-                        <button
-                          onClick={() => setBulkConfirm("unarchive")}
-                          disabled={isBulkActing}
-                          className="flex items-center gap-1 rounded-lg bg-white border border-blue-200 px-2.5 py-1 text-xs font-bold text-blue-600 hover:bg-blue-50 transition-colors disabled:opacity-50"
-                        >
-                          <Archive className="h-3.5 w-3.5" />
-                          Move to Inbox
-                        </button>
-                      ) : view !== "sent" ? (
-                        <button
-                          onClick={() => setBulkConfirm("archive")}
-                          disabled={isBulkActing}
-                          className="flex items-center gap-1 rounded-lg bg-white border border-gray-200 px-2.5 py-1 text-xs font-bold text-gray-600 hover:bg-gray-50 transition-colors disabled:opacity-50"
-                        >
-                          <Archive className="h-3.5 w-3.5" />
-                          Archive
-                        </button>
-                      ) : null}
+                    <div className="flex items-center gap-2 px-4 sm:px-5 py-2">
                       <button
-                        onClick={() => setBulkConfirm("delete")}
-                        disabled={isBulkActing}
-                        className="flex items-center gap-1 rounded-lg bg-red-50 border border-red-200 px-2.5 py-1 text-xs font-bold text-red-600 hover:bg-red-100 transition-colors disabled:opacity-50"
+                        onClick={handleSelectAll}
+                        className="text-sm text-blue-700 hover:underline"
                       >
-                        <Trash2 className="h-3.5 w-3.5" />
-                        Delete
+                        {bulkSelectedIds.size} selected
                       </button>
+                      <div className="ml-auto flex items-center gap-1">
+                        {view === "archived" ? (
+                          <button
+                            onClick={() => setBulkConfirm("unarchive")}
+                            disabled={isBulkActing}
+                            className="flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-sm text-gray-700 hover:bg-white transition-colors disabled:opacity-50"
+                          >
+                            <Archive className="h-4 w-4" />
+                            Move to inbox
+                          </button>
+                        ) : view !== "sent" ? (
+                          <button
+                            onClick={() => setBulkConfirm("archive")}
+                            disabled={isBulkActing}
+                            className="flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-sm text-gray-700 hover:bg-white transition-colors disabled:opacity-50"
+                          >
+                            <Archive className="h-4 w-4" />
+                            Archive
+                          </button>
+                        ) : null}
+                        <button
+                          onClick={() => setBulkConfirm("delete")}
+                          disabled={isBulkActing}
+                          className="flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-sm text-gray-700 hover:bg-white hover:text-red-600 transition-colors disabled:opacity-50"
+                        >
+                          <Trash2 className="h-4 w-4" />
+                          Delete
+                        </button>
+                      </div>
                     </div>
                   </motion.div>
                 )}
               </AnimatePresence>
-            </div>
 
-            <div className="flex-1 overflow-y-auto custom-scrollbar">
-              <MessageList
-                messages={filteredMessages}
-                selectedId={selectedMessageId}
-                onSelect={handleSelect}
-                view={view}
-                unreadIds={view === "inbox" ? unreadIds : undefined}
-                onLoadMore={handleLoadMore}
-                hasMore={!searchQuery && hasMore[view]}
-                selectedIds={bulkSelectedIds}
-                onToggleSelect={view !== "vault" ? handleToggleSelect : undefined}
-              />
-            </div>
-          </div>
-
-          {/* Message Detail */}
-          <div
-            className={cn(
-              "flex-1 overflow-hidden",
-              selectedMessageId ? "flex" : "hidden md:flex"
-            )}
-          >
-            <AnimatePresence mode="wait">
-              {selectedMessage ? (
-                <MessageView
-                  key={selectedMessage.id}
-                  message={selectedMessage}
-                  onClose={() => setSelectedMessageId(null)}
-                  onDeleted={handleDeleted}
-                  onArchived={handleArchived}
-                  onUnarchived={handleUnarchived}
-                  onReply={view !== "vault" && view !== "sent" ? handleReply : undefined}
-                  onForward={view !== "vault" ? handleForward : undefined}
-                  onSubjectDecrypted={(s) => setDecryptedSubjects(prev => ({ ...prev, [selectedMessage.id]: s }))}
-                  isSentView={view === "sent"}
-                  isVaultView={isVaultView}
-                  isArchivedView={view === "archived"}
-                />
-              ) : (
-                <motion.div
-                  initial={{ opacity: 0 }}
-                  animate={{ opacity: 1 }}
-                  exit={{ opacity: 0 }}
-                  className="hidden md:flex h-full w-full flex-col items-center justify-center bg-gray-50/50"
-                >
-                  <div className="text-center max-w-xs px-6">
-                    <div className="relative inline-block mb-5">
-                      <div className="relative h-16 w-16 rounded-2xl bg-white border border-gray-200 flex items-center justify-center shadow-sm mx-auto">
-                        {isVaultView ? <Building2 className="h-7 w-7 text-blue-300" />
-                          : view === "archived" ? <Archive className="h-7 w-7 text-gray-300" />
-                          : <Mail className="h-7 w-7 text-gray-300" />}
-                      </div>
-                    </div>
-                    <h3 className="text-base font-semibold text-gray-700 mb-1.5">
-                      {VIEW_EMPTY[view].title}
-                    </h3>
-                    <p className="text-gray-400 text-sm leading-relaxed">
-                      {VIEW_EMPTY[view].body}
+              <div className="flex-1 overflow-y-auto custom-scrollbar">
+                {filteredMessages.length === 0 && searchQuery ? (
+                  <div className="flex flex-col items-center justify-center py-20 text-center px-6">
+                    <p className="text-sm text-gray-500">No matches for “{searchQuery}”</p>
+                    <p className="text-sm text-gray-400 mt-1">
+                      Only senders and subjects you&apos;ve already opened can be searched.
                     </p>
-                    {view === "inbox" && (
-                      <div className="mt-5 flex items-center justify-center gap-1.5 text-[10px] font-bold uppercase tracking-widest text-emerald-600">
-                        <ShieldCheck className="h-3 w-3" />
-                        All messages are end-to-end encrypted
-                      </div>
-                    )}
                   </div>
-                </motion.div>
-              )}
-            </AnimatePresence>
-          </div>
-        </div>
+                ) : filteredMessages.length === 0 ? (
+                  <div className="flex flex-col items-center justify-center py-20 text-center px-6">
+                    <div className="h-12 w-12 rounded-xl bg-gray-100 flex items-center justify-center mb-3">
+                      {isVaultView ? <Building2 className="h-5 w-5 text-gray-400" />
+                        : view === "archived" ? <Archive className="h-5 w-5 text-gray-400" />
+                        : <Mail className="h-5 w-5 text-gray-400" />}
+                    </div>
+                    <p className="text-sm text-gray-500">{VIEW_EMPTY[view].title}</p>
+                    <p className="text-sm text-gray-400 mt-1">{VIEW_EMPTY[view].body}</p>
+                  </div>
+                ) : (
+                  <MessageList
+                    messages={filteredMessages}
+                    selectedId={selectedMessageId}
+                    onSelect={handleSelect}
+                    view={view}
+                    unreadIds={view === "inbox" ? unreadIds : undefined}
+                    decryptedSubjects={decryptedSubjects}
+                    onLoadMore={handleLoadMore}
+                    hasMore={!searchQuery && hasMore[view]}
+                    selectedIds={bulkSelectedIds}
+                    onToggleSelect={view !== "vault" ? handleToggleSelect : undefined}
+                    onArchive={
+                      view !== "sent"
+                        ? (id) => setKeyboardConfirm({ type: "archive", messageId: id })
+                        : undefined
+                    }
+                    onDelete={(id) => setKeyboardConfirm({ type: "delete", messageId: id })}
+                  />
+                )}
+              </div>
+            </>
+          )}
+        </main>
       </div>
+
+      {/* Compose lives in the sidebar on desktop, which is hidden on mobile,
+          so small screens get a floating button instead. */}
+      {!selectedMessage && (
+        <button
+          onClick={() => setIsComposeOpen(true)}
+          aria-label="Compose message"
+          className="md:hidden fixed bottom-20 right-5 z-30 flex h-14 w-14 items-center justify-center rounded-full bg-blue-600 text-white shadow-lg hover:bg-blue-700 active:scale-95 transition-all"
+        >
+          <PenLine className="h-5 w-5" />
+        </button>
+      )}
 
       {/* Mobile Bottom Nav */}
       <div className="md:hidden flex items-center justify-around py-2.5 px-4 border-t border-gray-200 bg-white shrink-0">
@@ -563,23 +605,22 @@ export default function DashboardUI({
           >
             <Icon className="h-5 w-5" />
             {id === "inbox" && unreadCount > 0 && (
-              <span className="absolute -top-1 -right-2 h-4 min-w-[16px] rounded-full bg-blue-600 text-[9px] font-black text-white flex items-center justify-center px-1">
+              <span className="absolute -top-1 -right-2 h-4 min-w-[16px] rounded-full bg-blue-600 text-xs font-semibold text-white flex items-center justify-center px-1">
                 {unreadCount > 99 ? "99+" : unreadCount}
               </span>
             )}
-            <span className="text-[10px] font-bold uppercase tracking-widest">{label}</span>
+            <span className="text-xs font-bold">{label}</span>
           </button>
         ))}
         <Link href="/profile" className="flex flex-col items-center gap-1 text-gray-400">
           <User className="h-5 w-5" />
-          <span className="text-[10px] font-bold uppercase tracking-widest">Profile</span>
+          <span className="text-xs font-bold">Profile</span>
         </Link>
       </div>
 
       <ComposeModal
         isOpen={isComposeOpen}
         onClose={() => { setIsComposeOpen(false); setReplyTarget(null); setForwardTarget(null); }}
-        user={user}
         replyTo={replyTarget ? {
           email: replyTarget.sender.email,
           org: null,
@@ -593,28 +634,33 @@ export default function DashboardUI({
         {keyboardConfirm && (
           <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-[2px]">
             <motion.div
+              ref={keyboardDialogRef}
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="keyboard-confirm-title"
+              tabIndex={-1}
               initial={{ opacity: 0, scale: 0.96 }}
               animate={{ opacity: 1, scale: 1 }}
               exit={{ opacity: 0, scale: 0.96 }}
-              className="bg-white rounded-2xl border border-gray-200 shadow-xl p-6 mx-4 max-w-sm w-full"
+              className="bg-white rounded-xl border border-gray-200 shadow-xl p-6 mx-4 max-w-sm w-full outline-none"
             >
               <div className={cn(
-                "flex items-center justify-center h-12 w-12 rounded-2xl mx-auto mb-4",
+                "flex items-center justify-center h-12 w-12 rounded-xl mx-auto mb-4",
                 keyboardConfirm.type === "delete" ? "bg-red-50 border border-red-100" : "bg-blue-50 border border-blue-100"
               )}>
                 {keyboardConfirm.type === "delete"
                   ? <Trash2 className="h-5 w-5 text-red-500" />
                   : <Archive className="h-5 w-5 text-blue-500" />}
               </div>
-              <h3 className="text-base font-bold text-gray-900 text-center mb-1">
-                {keyboardConfirm.type === "delete" ? "Delete message?" : view === "archived" ? "Move to inbox?" : "Archive message?"}
+              <h3 id="keyboard-confirm-title" className="text-base font-bold text-gray-900 text-center mb-1">
+                {keyboardConfirm.type === "delete" ? "Delete this message?" : view === "archived" ? "Move to inbox?" : "Archive this message?"}
               </h3>
               <p className="text-sm text-gray-500 text-center mb-6">
                 {keyboardConfirm.type === "delete"
-                  ? "This will permanently remove the message from your inbox."
+                  ? "Removes it from your inbox. Can't be undone."
                   : view === "archived"
-                  ? "This message will be moved back to your inbox."
-                  : "This message will be moved to your archive."}
+                  ? "It goes back to your inbox."
+                  : "You can restore it anytime."}
               </p>
               <div className="flex gap-3">
                 <button
@@ -632,7 +678,7 @@ export default function DashboardUI({
                     keyboardConfirm.type === "delete" ? "bg-red-500 hover:bg-red-600" : "bg-blue-600 hover:bg-blue-700"
                   )}
                 >
-                  {keyboardConfirm.type === "delete" ? "Delete" : view === "archived" ? "Move to Inbox" : "Archive"}
+                  {keyboardConfirm.type === "delete" ? "Delete" : view === "archived" ? "Move to inbox" : "Archive"}
                 </button>
               </div>
             </motion.div>
@@ -645,20 +691,25 @@ export default function DashboardUI({
         {bulkConfirm && (
           <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-[2px]">
             <motion.div
+              ref={bulkDialogRef}
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="bulk-confirm-title"
+              tabIndex={-1}
               initial={{ opacity: 0, scale: 0.96 }}
               animate={{ opacity: 1, scale: 1 }}
               exit={{ opacity: 0, scale: 0.96 }}
-              className="bg-white rounded-2xl border border-gray-200 shadow-xl p-6 mx-4 max-w-sm w-full"
+              className="bg-white rounded-xl border border-gray-200 shadow-xl p-6 mx-4 max-w-sm w-full outline-none"
             >
               <div className={cn(
-                "flex items-center justify-center h-12 w-12 rounded-2xl mx-auto mb-4",
+                "flex items-center justify-center h-12 w-12 rounded-xl mx-auto mb-4",
                 bulkConfirm === "delete" ? "bg-red-50 border border-red-100" : "bg-blue-50 border border-blue-100"
               )}>
                 {bulkConfirm === "delete"
                   ? <Trash2 className="h-5 w-5 text-red-500" />
                   : <Archive className="h-5 w-5 text-blue-500" />}
               </div>
-              <h3 className="text-base font-bold text-gray-900 text-center mb-1">
+              <h3 id="bulk-confirm-title" className="text-base font-bold text-gray-900 text-center mb-1">
                 {bulkConfirm === "delete"
                   ? `Delete ${bulkSelectedIds.size} message${bulkSelectedIds.size > 1 ? "s" : ""}?`
                   : bulkConfirm === "unarchive"
@@ -667,10 +718,10 @@ export default function DashboardUI({
               </h3>
               <p className="text-sm text-gray-500 text-center mb-6">
                 {bulkConfirm === "delete"
-                  ? "This will permanently remove these messages from your inbox."
+                  ? "Removes them from your inbox. Can't be undone."
                   : bulkConfirm === "unarchive"
-                  ? "These messages will be moved back to your inbox."
-                  : "These messages will be moved to your archive."}
+                  ? "They go back to your inbox."
+                  : "You can restore them anytime."}
               </p>
               <div className="flex gap-3">
                 <button
@@ -693,7 +744,7 @@ export default function DashboardUI({
                     bulkConfirm === "delete" ? "bg-red-500 hover:bg-red-600" : "bg-blue-600 hover:bg-blue-700"
                   )}
                 >
-                  {bulkConfirm === "delete" ? "Delete" : bulkConfirm === "unarchive" ? "Move to Inbox" : "Archive"}
+                  {bulkConfirm === "delete" ? "Delete" : bulkConfirm === "unarchive" ? "Move to inbox" : "Archive"}
                 </button>
               </div>
             </motion.div>

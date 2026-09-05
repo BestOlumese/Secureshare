@@ -44,7 +44,7 @@ export default function InviteAcceptClient({ invitation }: InviteAcceptClientPro
 
   return (
     <div className="text-center">
-      <div className="h-14 w-14 rounded-2xl bg-blue-50 flex items-center justify-center mx-auto mb-6">
+      <div className="h-14 w-14 rounded-xl bg-blue-50 flex items-center justify-center mx-auto mb-6">
         <Building2 className="h-7 w-7 text-blue-600" />
       </div>
 
@@ -66,7 +66,7 @@ export default function InviteAcceptClient({ invitation }: InviteAcceptClientPro
         </div>
         <div className="flex justify-between text-sm">
           <span className="text-gray-400 font-medium">Role</span>
-          <span className="inline-flex items-center gap-1 font-bold text-blue-600 bg-blue-50 px-2 py-0.5 rounded-full text-xs border border-blue-200 uppercase tracking-widest">
+          <span className="inline-flex items-center gap-1 font-bold text-blue-600 bg-blue-50 px-2 py-0.5 rounded-full text-xs border border-blue-200">
             <ShieldCheck className="h-3 w-3" />
             {invitation.role}
           </span>
@@ -76,7 +76,7 @@ export default function InviteAcceptClient({ invitation }: InviteAcceptClientPro
       <button
         onClick={handleAccept}
         disabled={isAccepting}
-        className="w-full flex items-center justify-center gap-2 rounded-xl bg-blue-600 px-6 py-3 text-sm font-bold text-white hover:bg-blue-700 transition-colors disabled:opacity-60"
+        className="w-full flex items-center justify-center gap-2 rounded-lg bg-blue-600 px-6 py-3 text-sm font-bold text-white hover:bg-blue-700 transition-colors disabled:opacity-60"
       >
         {isAccepting ? (
           <>

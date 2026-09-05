@@ -7,23 +7,23 @@ const steps = [
   {
     number: "01",
     icon: Upload,
-    title: "Upload & Encrypt",
+    title: "You lock it",
     description:
-      "Your file is encrypted directly in your browser using AES-256 before it ever leaves your device. The server only receives an encrypted blob.",
+      "Your file is scrambled in your browser before it goes anywhere. We only ever receive the scrambled version.",
   },
   {
     number: "02",
     icon: Send,
-    title: "Send Securely",
+    title: "We carry it",
     description:
-      "The encrypted file is delivered to the recipient organization. Each recipient gets their own encrypted key — no shared secrets.",
+      "We pass it along without being able to look inside. Everyone you sent it to gets their own key.",
   },
   {
     number: "03",
     icon: Unlock,
-    title: "Decrypt & Access",
+    title: "They unlock it",
     description:
-      "Only the intended recipient can decrypt the file using their private RSA key, stored exclusively on their device.",
+      "Only the people you chose can open it, using a key that never leaves their own device.",
   },
 ];
 
@@ -36,7 +36,7 @@ export default function HowItWorks() {
             initial={{ opacity: 0, y: 12 }}
             whileInView={{ opacity: 1, y: 0 }}
             viewport={{ once: true }}
-            className="text-xs font-bold text-blue-600 uppercase tracking-widest mb-3"
+            className="text-xs font-bold text-blue-600 mb-3"
           >
             How it works
           </motion.p>
@@ -45,9 +45,9 @@ export default function HowItWorks() {
             whileInView={{ opacity: 1, y: 0 }}
             viewport={{ once: true }}
             transition={{ delay: 0.08 }}
-            className="text-3xl sm:text-4xl font-black text-gray-900 tracking-tight"
+            className="text-3xl sm:text-4xl font-semibold text-gray-900 tracking-tight"
           >
-            Three steps to total privacy
+            Three steps
           </motion.h2>
         </div>
 
@@ -65,10 +65,10 @@ export default function HowItWorks() {
               className="flex flex-col items-center text-center relative"
             >
               <div className="relative mb-6 z-10">
-                <div className="h-20 w-20 rounded-2xl bg-white border border-gray-200 shadow-sm flex items-center justify-center">
+                <div className="h-20 w-20 rounded-xl bg-white border border-gray-200 flex items-center justify-center">
                   <step.icon className="h-8 w-8 text-blue-600" />
                 </div>
-                <div className="absolute -top-2 -right-2 h-6 w-6 rounded-full bg-blue-600 text-white text-[10px] font-black flex items-center justify-center">
+                <div className="absolute -top-2 -right-2 h-6 w-6 rounded-full bg-blue-600 text-white text-xs font-semibold flex items-center justify-center">
                   {i + 1}
                 </div>
               </div>

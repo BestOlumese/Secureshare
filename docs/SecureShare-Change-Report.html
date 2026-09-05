@@ -1,0 +1,252 @@
+<html>
+<head>
+<meta charset="utf-8">
+<title>SecureShare — Change Report</title>
+<style>
+  body { font-family: Georgia, "Times New Roman", serif; font-size: 11pt; line-height: 1.5; color: #1a1a1a; }
+  h1 { font-family: Helvetica, Arial, sans-serif; font-size: 24pt; color: #1e40af; margin-bottom: 2pt; }
+  h2 { font-family: Helvetica, Arial, sans-serif; font-size: 15pt; color: #1e40af; margin-top: 22pt; border-bottom: 1px solid #cbd5e1; padding-bottom: 4pt; }
+  h3 { font-family: Helvetica, Arial, sans-serif; font-size: 12pt; color: #111827; margin-top: 16pt; margin-bottom: 4pt; }
+  .sub { font-family: Helvetica, Arial, sans-serif; font-size: 11pt; color: #64748b; margin-top: 0; }
+  table { border-collapse: collapse; width: 100%; margin: 8pt 0 14pt 0; font-family: Helvetica, Arial, sans-serif; font-size: 9.5pt; }
+  th { background: #eff6ff; border: 1px solid #bfdbfe; padding: 5pt 7pt; text-align: left; color: #1e3a8a; }
+  td { border: 1px solid #d1d5db; padding: 5pt 7pt; vertical-align: top; }
+  .lbl { font-family: Helvetica, Arial, sans-serif; font-size: 9pt; color: #64748b; font-weight: bold; }
+  .box { border: 1px solid #cbd5e1; background: #f8fafc; padding: 8pt 10pt; margin: 8pt 0; }
+  .plain { font-style: italic; color: #334155; }
+  ul { margin-top: 4pt; }
+  li { margin-bottom: 3pt; }
+  .foot { font-family: Helvetica, Arial, sans-serif; font-size: 9pt; color: #64748b; }
+</style>
+</head>
+<body>
+
+<h1>SecureShare</h1>
+<p class="sub">Development Change Report &middot; Prepared 5 September 2026</p>
+
+<p>This report explains every change made to the SecureShare application during this
+development cycle. It is written for a general reader: each item says what was wrong,
+what was done, and why it matters, before any technical detail. Terms are explained in
+the glossary at the end.</p>
+
+<h3>At a glance</h3>
+<table border="1" cellspacing="0" cellpadding="5">
+<tr><th>Measure</th><th>Before</th><th>After</th></tr>
+<tr><td>Files modified</td><td colspan="2">53 modified, 21 added, 2 removed</td></tr>
+<tr><td>Lines of code changed</td><td colspan="2">3,873 added / 2,305 removed</td></tr>
+<tr><td>Automated tests</td><td>0</td><td>57 (all passing)</td></tr>
+<tr><td>Code quality warnings</td><td>1,057</td><td>0</td></tr>
+<tr><td>Serious security defects found</td><td colspan="2">3 found, 3 fixed</td></tr>
+</table>
+
+<h2>1. What the application does</h2>
+
+<p>SecureShare lets organisations send messages and files to each other so that
+<b>only the intended recipients can read them</b>. The scrambling ("encryption")
+happens inside the sender's own web browser before anything is uploaded. The company
+running SecureShare stores only scrambled data and holds no key that could unlock it.</p>
+
+<p>This design is called <i>zero-knowledge</i>. Its value depends entirely on the
+promise being true in practice, which is why most of the work below concerns keeping
+that promise airtight.</p>
+
+<h2>2. Major changes</h2>
+
+<h3>2.1 Private keys were being sent to users' browsers <span class="lbl">(CRITICAL)</span></h3>
+<p class="plain">In plain terms: every user was being handed the locked spare keys of
+everyone they had ever messaged.</p>
+<p>Each user has a personal key that unlocks their messages. A copy is stored on the
+server in locked form, protected by the user's master password. Because of the way the
+database was being queried, that locked key &mdash; along with the values needed to
+attack it &mdash; was being included in the data sent to other users' browsers.</p>
+<p>Anyone could have taken a colleague's locked key from their own page, then tried
+passwords against it privately on their own computer, with no limit on attempts. A
+weak password would have given them that person's key, and with it every message ever
+sent to them.</p>
+<p><b>Fixed by</b> listing explicitly which fields may leave the server, in two places:
+the dashboard and the profile page. An automated test now fails if key material is ever
+added back.</p>
+
+<h3>2.2 Attachment file names were readable to the company</h3>
+<p class="plain">In plain terms: a file called "Redundancy List Q3.xlsx" gave away the
+secret even though the file itself was locked.</p>
+<p>Message text was scrambled, but file names were stored as ordinary text and shown in
+the interface before anything was unlocked. A file name is often as revealing as the
+file. The name was also given to the storage provider.</p>
+<p><b>Fixed by</b> scrambling the file name with the same key as the file, and giving the
+uploaded file a meaningless random name. The interface now shows a padlock and
+"Encrypted name" until the recipient unlocks the message. Older files still display
+correctly.</p>
+
+<h3>2.3 "Expiring" messages did not actually expire</h3>
+<p class="plain">In plain terms: setting a message to expire hid it, but the file stayed
+on the internet forever.</p>
+<p>The expiry setting was applied to the message but never to its attachments, and
+nothing ever deleted the stored file. A message could pass its expiry date while its
+attachment remained downloadable indefinitely.</p>
+<p><b>Fixed by</b> applying expiry to attachments, checking it when a file is requested,
+and adding a scheduled clean-up task that permanently deletes the stored file. Files are
+also deleted once every recipient has deleted the message. Expiry now means the data is
+gone, not hidden.</p>
+
+<h3>2.4 Administrator access was invisible</h3>
+<p class="plain">In plain terms: an administrator could read any company message and
+leave no trace.</p>
+<p>The organisation vault lets administrators open messages when the original recipient
+is unavailable &mdash; a legitimate feature. But no record was kept when they used it.
+The application also advertised a "sign-in" entry in its activity log that was never
+actually written.</p>
+<p><b>Fixed by</b> recording every vault access with the administrator's identity, the
+message, and the time; and by genuinely recording sign-ins with their location and
+browser. The vault is now a supervised tool rather than a silent back door.</p>
+
+<h3>2.5 Password protection was below current standards</h3>
+<p class="plain">In plain terms: guessing a stolen password was about six times cheaper
+than it should have been.</p>
+<p>The master password protects the user's key. Two weaknesses: users could choose an
+eight-character password with no strength requirement, and the protective calculation
+applied to it used 100,000 rounds &mdash; a figure from 2013. Current guidance is 600,000.</p>
+<p><b>Fixed by</b> requiring at least twelve characters with mixed character types,
+adding a live strength meter, and moving to 600,000 rounds. Because existing accounts
+were created under the old setting, the number used is now recorded per account, so
+current users keep working while new keys get the stronger protection.</p>
+
+<h3>2.6 Anyone could query the user directory</h3>
+<p class="plain">In plain terms: a stranger could ask the site which email addresses had
+accounts, and list every organisation.</p>
+<p>Several internal operations were reachable without being signed in. They could be
+used to confirm whether a given email address was registered and to enumerate every
+organisation on the platform &mdash; useful groundwork for a targeted phishing campaign.</p>
+<p><b>Fixed by</b> requiring a valid session on every one of them, and adding limits on
+how often a signed-in user may call the expensive ones. This also protects the sending
+reputation of the company's email domain from abuse.</p>
+
+<h3>2.7 The activity log gave confidently wrong answers</h3>
+<p class="plain">In plain terms: searching the log checked the most recent fifty entries
+and reported the result as though it had checked everything.</p>
+<p>Searching or filtering the audit log only examined the entries already loaded on
+screen. During an investigation this would report "2 events" when the true answer might
+be forty-seven. A tool used to answer "who did what" must not do this.</p>
+<p><b>Fixed by</b> performing searches and filters in the database across the whole log,
+and reporting a true total. The page also gained date filtering, grouping by day, and a
+spreadsheet export.</p>
+
+<h3>2.8 Defences added around the browser</h3>
+<p>Because SecureShare unlocks messages inside the browser, the page itself must be
+protected from tampering. A Content Security Policy now restricts what may run on each
+page, along with protections against the site being embedded in a fraudulent page.</p>
+<p>This was tested rather than assumed. The first version would have made the
+application fail to load; the policy was adjusted and verified page by page before being
+kept.</p>
+
+<h3>2.9 Automated testing and continuous checking</h3>
+<p>The project previously had no automated tests. There are now 57, covering the
+encryption functions, password rules, rate limits, and the safeguards protecting the
+data-export and private-key paths. A continuous integration pipeline runs these checks,
+plus type checking, code-quality checks and a full build, on every change.</p>
+
+<h3>2.10 Plain-language rewrite of all text</h3>
+<p>The wording throughout described the cryptography rather than the situation. One
+error read <i>"Cryptographic Mismatch Detected &mdash; The assigned organization does not
+match the recipient's secure record."</i> It now reads
+<i>"ana@bolt.legal is at Bolt Legal, not Acme Corp."</i></p>
+<p>Every screen, error message, notification and marketing page was rewritten. A branding
+inconsistency was also corrected: sign-in code emails were branded "SecureMail" while the
+site said "SecureShare" &mdash; the exact mismatch people are trained to treat as a
+phishing signal.</p>
+
+<h3>2.11 Visual redesign</h3>
+<p>The interface was tidied without changing its layout, its behaviour on phones, or its
+colours. Decorative elements were removed in favour of consistency: 47 all-capital
+micro-labels, 27 uses of the heaviest available text weight, 49 pieces of text below
+readable size, five competing corner shapes, and 40 padlock and shield icons used as
+decoration. Icons now appear only where they carry meaning.</p>
+
+<h3>2.12 Dashboard rebuilt in a familiar layout</h3>
+<p>The mailbox was restructured to follow the conventions of a mainstream email client:
+a full-width bar with search, a labelled sidebar with a Compose button and unread count,
+and messages that open full-width. Because subjects stay locked until opened, message
+rows show what is genuinely known &mdash; sender, attachments, recipients &mdash; rather
+than repeating the word "Encrypted".</p>
+
+<h3>2.13 Profile and organisation pages restructured</h3>
+<p>The profile moved to a settings-style layout with sections down the left. Security
+settings were regrouped by task &mdash; Password, Keys, Devices. Members and pending
+invitations, previously spread across four separate panels, became a single list with
+invitations sent from a dialog.</p>
+
+<h3>2.14 Landing page expanded</h3>
+<p>Three sections were added: an honest account of what the company can and cannot see,
+a comparison against ordinary email attachments, and a set of frequently asked questions.
+Every claim was checked against how the software actually behaves. Signed-in visitors now
+see a link to their dashboard instead of an invitation to sign up.</p>
+
+<h2>3. Minor changes</h2>
+
+<table border="1" cellspacing="0" cellpadding="5">
+<tr><th style="width:26%">Area</th><th>Change</th></tr>
+<tr><td>Database connections</td><td>Development server opened a new database connection on every code reload until it ran out. Now reuses one.</td></tr>
+<tr><td>Database speed</td><td>Twelve indexes added to the queries used on every page load.</td></tr>
+<tr><td>Message search</td><td>Searching by subject could never match, because subjects are scrambled. Now searches the subjects unlocked in the session, and shows them in the list.</td></tr>
+<tr><td>Email addresses</td><td>Sending to an address typed with capital letters failed with "recipient not found". Now matched consistently.</td></tr>
+<tr><td>Expired messages</td><td>Were still listed in the mailbox, and only revealed as expired when opened. Now hidden.</td></tr>
+<tr><td>Organisation vault</td><td>The vault view could not load additional pages or receive new messages.</td></tr>
+<tr><td>Copied recipients</td><td>A copied recipient could be left without an organisation, quietly excluding their administrators from recovery. Now required.</td></tr>
+<tr><td>Compose window</td><td>Adding a recipient while an address lookup was in progress could delete the row. Also, a missing subject blocked sending with no message shown.</td></tr>
+<tr><td>Recovery key</td><td>Accounts without a recovery key reported "invalid recovery key" instead of explaining that none was set up.</td></tr>
+<tr><td>Deleting a message</td><td>The quick-delete button on a message row deleted immediately. Now asks for confirmation.</td></tr>
+<tr><td>Keyboard and screen readers</td><td>All nine dialogs gained proper labelling, keyboard trapping and Escape-to-close. Icon-only buttons gained descriptions.</td></tr>
+<tr><td>Spreadsheet export safety</td><td>Exported logs contain user-supplied names. Values that spreadsheets would treat as formulas are now neutralised.</td></tr>
+<tr><td>Audit log detail</td><td>Entries recorded which message or file was involved but never displayed it. Now shown. A field storing an unreadable scrambled file name was removed.</td></tr>
+<tr><td>Setup documentation</td><td>The project guide was the unmodified framework template. Replaced with real instructions, and a template for the required settings was added.</td></tr>
+<tr><td>User guide corrections</td><td>The guide instructed users to choose an eight-character password the software now rejects; claimed sign-ins were recorded when they were not; and described a sending limit that did not exist.</td></tr>
+<tr><td>Code quality tooling</td><td>The quality checker was reporting 1,057 problems, almost all from auto-generated files it should have ignored. Now reports zero.</td></tr>
+<tr><td>Unused code</td><td>An entire unreachable upload page and its 230-line form were removed.</td></tr>
+<tr><td>Application icon</td><td>The generic shield was replaced with a purpose-drawn envelope-and-keyhole mark used consistently throughout.</td></tr>
+<tr><td>Mobile compose</td><td>Moving Compose into the sidebar removed it from phones. A floating button was added.</td></tr>
+</table>
+
+<h2>4. How the work was verified</h2>
+<ul>
+<li><b>Automated tests</b> &mdash; 57 checks covering encryption, password rules, rate limiting and export safety.</li>
+<li><b>Type checking</b> &mdash; the whole project verified for internal consistency. This caught two crashes hidden by loose typing.</li>
+<li><b>Code quality checks</b> &mdash; zero warnings across the project.</li>
+<li><b>Full build</b> &mdash; the production build completes without error.</li>
+<li><b>Live inspection</b> &mdash; pages were loaded from a running server and read as a visitor sees them. This is how an outdated marketing panel and a security policy that would have broken the site were both caught; neither was visible in the code alone.</li>
+<li><b>Database verification</b> &mdash; schema changes were applied and confirmed against the live database.</li>
+</ul>
+
+<h2>5. Outstanding items</h2>
+<p>The following were identified but not carried out, and are recorded here for
+completeness.</p>
+<table border="1" cellspacing="0" cellpadding="5">
+<tr><th style="width:32%">Item</th><th>Note</th></tr>
+<tr><td>Key stored on device</td><td>The unlocked key is held in browser storage so messages open without re-entering the password each time. Convenient, but it means physical access to an unlocked computer is enough. A deliberate trade-off worth revisiting.</td></tr>
+<tr><td>Forward and reply</td><td>Carry the subject only, not the original message or its attachments.</td></tr>
+<tr><td>Attachment preview</td><td>Images and documents must be downloaded; they cannot be viewed in place.</td></tr>
+<tr><td>Repeated unlocking</td><td>Moving away from a message and back requires unlocking it again.</td></tr>
+<tr><td>Sending to new people</td><td>Recipients must already have an account. They now receive a clear explanation rather than an error.</td></tr>
+<tr><td>Sign-in notifications</td><td>Sent on every sign-in, which some users may find excessive.</td></tr>
+<tr><td>Interface testing</td><td>Automated tests cover the underlying logic. The signed-in screens have not been through an automated click-through and are worth reviewing by hand.</td></tr>
+</table>
+
+<h2>6. Glossary</h2>
+<table border="1" cellspacing="0" cellpadding="5">
+<tr><th style="width:26%">Term</th><th>Meaning</th></tr>
+<tr><td>Encryption</td><td>Scrambling information so only someone with the right key can read it.</td></tr>
+<tr><td>Key</td><td>The secret value that unscrambles information. Each user has their own.</td></tr>
+<tr><td>Master password</td><td>The password protecting a user's key. Never sent to the company, and therefore impossible for them to reset.</td></tr>
+<tr><td>Recovery key</td><td>A one-off code shown at sign-up. The only way back in if the master password is forgotten.</td></tr>
+<tr><td>Zero-knowledge</td><td>A design where the company operating the service cannot read what users store on it.</td></tr>
+<tr><td>Audit log</td><td>A permanent record of who did what, and when.</td></tr>
+<tr><td>Organisation vault</td><td>A shared key letting administrators open company messages when the recipient is unavailable. Every use is recorded.</td></tr>
+<tr><td>Content Security Policy</td><td>A browser instruction limiting what code a page may run, reducing the damage a successful attack can do.</td></tr>
+<tr><td>Continuous integration</td><td>Automatic checking of every change before it reaches the live site.</td></tr>
+<tr><td>Metadata</td><td>Information about a message rather than its contents &mdash; who sent it, when, and how large. Encryption hides contents, not this.</td></tr>
+</table>
+
+<p class="foot">Report generated 5 September 2026. Figures taken from the project's own
+test, build and quality tooling at the time of writing.</p>
+
+</body>
+</html>

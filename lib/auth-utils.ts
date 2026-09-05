@@ -10,7 +10,7 @@ export async function protectPage(allowOnboarding = false) {
   // Apply Rate Limiting (30 requests per minute per IP for sensitive pages)
   const limiter = rateLimit(`page:${ip}`, 30, 60 * 1000);
   if (!limiter.success) {
-    throw new Error("Too many requests. Please slow down.");
+    throw new Error("Slow down a moment.");
   }
 
   const session = await auth.api.getSession({
@@ -41,7 +41,7 @@ export async function protectAuthPage() {
   // Apply Rate Limiting (20 requests per minute per IP for auth pages)
   const limiter = rateLimit(`auth_page:${ip}`, 20, 60 * 1000);
   if (!limiter.success) {
-    throw new Error("Too many requests. Please slow down.");
+    throw new Error("Slow down a moment.");
   }
 
   const session = await auth.api.getSession({

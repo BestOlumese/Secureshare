@@ -29,12 +29,12 @@ export default class ErrorBoundary extends React.Component<
     if (this.state.hasError) {
       return (
         <div className="flex flex-col items-center justify-center h-screen bg-gray-50 text-center px-6">
-          <div className="h-16 w-16 rounded-2xl bg-red-50 border border-red-100 flex items-center justify-center mx-auto mb-5">
+          <div className="h-16 w-16 rounded-xl bg-red-50 border border-red-100 flex items-center justify-center mx-auto mb-5">
             <ShieldAlert className="h-7 w-7 text-red-400" />
           </div>
           <h2 className="text-lg font-bold text-gray-900 mb-2">Something went wrong</h2>
           <p className="text-sm text-gray-500 mb-1 max-w-sm">
-            An unexpected error occurred. Your encrypted data is safe.
+            Your data is fine. Reloading usually fixes it.
           </p>
           {this.state.error && (
             <p className="text-xs text-gray-400 font-mono mb-6 max-w-sm truncate">

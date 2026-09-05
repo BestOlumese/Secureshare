@@ -3,6 +3,7 @@
 import { prisma } from "@/lib/db";
 import { auth } from "@/lib/auth";
 import { headers } from "next/headers";
+import { getErrorMessage } from "@/lib/utils";
 
 export async function completeOnboarding(data: {
   name: string;
@@ -14,6 +15,7 @@ export async function completeOnboarding(data: {
   recoveryEncryptedPrivateKey?: string;
   recoverySalt?: string;
   recoveryIV?: string;
+  kdfIterations?: number;
 }) {
   try {
     const session = await auth.api.getSession({
@@ -78,6 +80,7 @@ export async function completeOnboarding(data: {
           recoveryEncryptedPrivateKey: data.recoveryEncryptedPrivateKey,
           recoverySalt: data.recoverySalt,
           recoveryIV: data.recoveryIV,
+          kdfIterations: data.kdfIterations,
           onboarded: true,
         },
       });
@@ -101,8 +104,8 @@ export async function completeOnboarding(data: {
     });
 
     return result;
-  } catch (err: any) {
+  } catch (err: unknown) {
     console.error("Onboarding Error:", err);
-    return { success: false, error: err.message || "An unexpected error occurred." };
+    return { success: false, error: getErrorMessage(err, "An unexpected error occurred.") };
   }
 }

@@ -1,38 +1,38 @@
 "use client";
 
 import { motion } from "framer-motion";
-import { ShieldCheck, Share2, History, Key, Cpu, RefreshCw } from "lucide-react";
+import { ShieldCheck, Share2, History, Key, Laptop, RefreshCw } from "lucide-react";
 
 const features = [
   {
     icon: ShieldCheck,
-    title: "Zero-Knowledge Storage",
-    description: "We never hold your keys. Your data is encrypted locally before it ever reaches our servers.",
+    title: "We can't read your files",
+    description: "Everything is locked on your device first. We only ever store scrambled data.",
   },
   {
     icon: Share2,
-    title: "Cross-Org Collaboration",
-    description: "Securely bridge communication between different organizations without compromising security.",
+    title: "Works between companies",
+    description: "Send to people at other organizations without either side giving up control.",
   },
   {
     icon: History,
-    title: "Immutable Audit Logs",
-    description: "Track every interaction across organizations with enterprise-grade transparency.",
+    title: "A record of everything",
+    description: "Who sent what, who opened it, and when. Including your own admins.",
   },
   {
     icon: Key,
-    title: "Per-Recipient Key Wrapping",
-    description: "Each recipient gets their own encrypted copy of the AES key — no shared secrets.",
+    title: "A separate key per person",
+    description: "Everyone gets their own way in, so one leak can't unlock the rest.",
   },
   {
-    icon: Cpu,
-    title: "Client-Side Cryptography",
-    description: "RSA-2048 and AES-256-GCM encryption runs directly in your browser. Nothing leaves unencrypted.",
+    icon: Laptop,
+    title: "Nothing leaves unlocked",
+    description: "Encryption happens in your browser, before anything is uploaded.",
   },
   {
     icon: RefreshCw,
-    title: "Cross-Device Recovery",
-    description: "Sync your vault across devices securely using your master password or emergency recovery key.",
+    title: "Use it anywhere",
+    description: "Your master password unlocks your messages on any device you sign in from.",
   },
 ];
 
@@ -45,7 +45,7 @@ export default function Features() {
             initial={{ opacity: 0, y: 12 }}
             whileInView={{ opacity: 1, y: 0 }}
             viewport={{ once: true }}
-            className="text-xs font-bold text-blue-600 uppercase tracking-widest mb-3"
+            className="text-xs font-bold text-blue-600 mb-3"
           >
             Features
           </motion.p>
@@ -54,9 +54,9 @@ export default function Features() {
             whileInView={{ opacity: 1, y: 0 }}
             viewport={{ once: true }}
             transition={{ delay: 0.08 }}
-            className="text-3xl sm:text-4xl font-black text-gray-900 tracking-tight mb-4"
+            className="text-3xl sm:text-4xl font-semibold text-gray-900 tracking-tight mb-4"
           >
-            Built for security, designed for teams
+            What you get
           </motion.h2>
           <motion.p
             initial={{ opacity: 0, y: 12 }}
@@ -65,7 +65,7 @@ export default function Features() {
             transition={{ delay: 0.12 }}
             className="max-w-xl mx-auto text-gray-500"
           >
-            Every feature is engineered with privacy as the foundation, not an afterthought.
+            The privacy is structural, not a setting you turn on.
           </motion.p>
         </div>
 
@@ -77,7 +77,7 @@ export default function Features() {
               whileInView={{ opacity: 1, y: 0 }}
               viewport={{ once: true }}
               transition={{ delay: i * 0.07 }}
-              className="group p-6 rounded-2xl border border-gray-200 bg-white hover:border-blue-200 hover:shadow-md transition-all duration-300"
+              className="group p-6 rounded-xl border border-gray-200 bg-white hover:border-blue-200 hover:transition-all duration-300"
             >
               <div className="mb-4 inline-flex h-11 w-11 items-center justify-center rounded-xl bg-blue-50 text-blue-600 group-hover:bg-blue-600 group-hover:text-white transition-all duration-300">
                 <feature.icon className="h-5 w-5" />

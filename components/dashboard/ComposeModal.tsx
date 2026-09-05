@@ -5,14 +5,12 @@ import {
   X,
   Send,
   Paperclip,
-  ShieldCheck,
   Loader2,
   User,
   Mail,
   XCircle,
   FileText,
   Lock,
-  Search,
   Plus,
   Building2,
   Clock,
@@ -26,7 +24,8 @@ import {
   generateAesKey, 
   encryptFile, 
   wrapAesKey,
-  encryptString
+  encryptString,
+  opaqueUploadName
 } from "@/lib/crypto-client";
 import { 
   getPublicKeys,
@@ -35,19 +34,28 @@ import {
 } from "@/app/actions/documents";
 import { searchOrganizations, getRecipientOrg, getOrgPublicKey } from "@/app/actions/org-actions";
 import { useUploadThing } from "@/lib/uploadthing";
-import { cn } from "@/lib/utils";
+import { useModalA11y } from "@/lib/use-modal-a11y";
+import { getErrorMessage } from "@/lib/utils";
 
 const composeSchema = z.object({
-  subject: z.string().min(1, "Subject is required"),
+  subject: z.string().min(1, "Add a subject"),
   content: z.string().optional(),
 });
 
 type ComposeData = z.infer<typeof composeSchema>;
 
+/** What sendSecureMessage expects for each encrypted attachment. */
+interface AttachmentMetadata {
+  fileUrl: string;
+  fileName: string;
+  fileSize: number;
+  contentType: string;
+  documentKeyShares: Array<{ userId: string; encryptedAesKey: string }>;
+}
+
 interface ComposeModalProps {
   isOpen: boolean;
   onClose: () => void;
-  user: any;
   replyTo?: {
     email: string;
     org: { id: string; name: string } | null;
@@ -56,7 +64,7 @@ interface ComposeModalProps {
   forwardSubject?: string;
 }
 
-export default function ComposeModal({ isOpen, onClose, user, replyTo, forwardSubject }: ComposeModalProps) {
+export default function ComposeModal({ isOpen, onClose, replyTo, forwardSubject }: ComposeModalProps) {
   const [files, setFiles] = useState<File[]>([]);
   const [isSending, setIsSending] = useState(false);
   const [progress, setProgress] = useState(0);
@@ -81,8 +89,15 @@ export default function ComposeModal({ isOpen, onClose, user, replyTo, forwardSu
   const [isSearchingOrgs, setIsSearchingOrgs] = useState(false);
   const [activeSearchTarget, setActiveSearchTarget] = useState<"to" | number | null>(null); // 'to' or index of cc
   
+  const dialogRef = useModalA11y<HTMLDivElement>(isOpen, onClose);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const searchTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+
+  const { startUpload } = useUploadThing("encryptedFileUploader");
+
+  const { register, handleSubmit, reset, setValue, formState: { errors } } = useForm<ComposeData>({
+    resolver: zodResolver(composeSchema),
+  });
 
   // Pre-fill when replying or forwarding
   useEffect(() => {
@@ -93,13 +108,8 @@ export default function ComposeModal({ isOpen, onClose, user, replyTo, forwardSu
     } else if (forwardSubject) {
       setValue("subject", forwardSubject.startsWith("Fwd:") ? forwardSubject : `Fwd: ${forwardSubject}`);
     }
-  }, [replyTo, forwardSubject, isOpen]);
+  }, [replyTo, forwardSubject, isOpen, setValue]);
 
-  const { startUpload } = useUploadThing("encryptedFileUploader");
-
-  const { register, handleSubmit, reset, setValue, formState: { errors } } = useForm<ComposeData>({
-    resolver: zodResolver(composeSchema),
-  });
 
   const handleOrgSearch = async (val: string, target: "to" | number) => {
     setOrgSearch(val);
@@ -128,9 +138,9 @@ export default function ComposeModal({ isOpen, onClose, user, replyTo, forwardSu
     if (activeSearchTarget === "to") {
       setToRecipient(prev => ({ ...prev, org }));
     } else if (typeof activeSearchTarget === "number") {
-      const newCcs = [...ccRecipients];
-      newCcs[activeSearchTarget].org = org;
-      setCcRecipients(newCcs);
+      setCcRecipients(prev =>
+        prev.map((cc, i) => (i === activeSearchTarget ? { ...cc, org } : cc))
+      );
     }
     setOrgSearch("");
     setOrgResults([]);
@@ -153,37 +163,35 @@ export default function ComposeModal({ isOpen, onClose, user, replyTo, forwardSu
     setToRecipient(prev => ({ ...prev, email }));
     if (email.includes("@") && email.includes(".")) {
       const org = await getRecipientOrg(email);
-      if (org) {
-        setToRecipient(prev => ({ 
-          ...prev, 
+      // Ignore a lookup the user has already typed past.
+      setToRecipient(prev => {
+        if (prev.email !== email) return prev;
+        if (!org) return { ...prev, dbOrgName: undefined };
+        return {
+          ...prev,
           dbOrgName: org.name,
           org: prev.org ? prev.org : { id: org.id, name: org.name },
-        }));
-      } else {
-        setToRecipient(prev => ({ ...prev, dbOrgName: undefined }));
-      }
+        };
+      });
     }
   };
 
   const updateCcEmail = async (index: number, email: string) => {
-    const newCcs = [...ccRecipients];
-    newCcs[index].email = email;
-    setCcRecipients(newCcs);
-    
+    // Updater form + copied rows: the lookup below is async, so building from
+    // a captured snapshot would drop any CC row added while it was in flight.
+    setCcRecipients(prev => prev.map((cc, i) => (i === index ? { ...cc, email } : cc)));
+
     if (email.includes("@") && email.includes(".")) {
       const org = await getRecipientOrg(email);
-      if (org) {
-        const updatedCcs = [...ccRecipients];
-        updatedCcs[index].dbOrgName = org.name;
-        if (!updatedCcs[index].org) {
-          updatedCcs[index].org = { id: org.id, name: org.name };
-        }
-        setCcRecipients(updatedCcs);
-      } else {
-        const updatedCcs = [...ccRecipients];
-        updatedCcs[index].dbOrgName = undefined;
-        setCcRecipients(updatedCcs);
-      }
+      setCcRecipients(prev => prev.map((cc, i) => {
+        if (i !== index || cc.email !== email) return cc;
+        if (!org) return { ...cc, dbOrgName: undefined };
+        return {
+          ...cc,
+          dbOrgName: org.name,
+          org: cc.org ? cc.org : { id: org.id, name: org.name },
+        };
+      }));
     }
   };
 
@@ -196,16 +204,21 @@ export default function ComposeModal({ isOpen, onClose, user, replyTo, forwardSu
   const onSubmit = async (data: ComposeData) => {
     // 1. Mandatory Validation
     if (!toRecipient.email) {
-      toast.error("Recipient Missing", {
-        description: "Please specify a target email address for secure delivery.",
-      });
+      toast.error("Add a recipient");
       return;
     }
 
     if (!toRecipient.org) {
-      toast.error("Organization Required", {
-        description: `Please assign ${toRecipient.email} to a target organization to ensure correct encryption.`,
-      });
+      toast.error(`Pick an organization for ${toRecipient.email}`);
+      return;
+    }
+
+    // CC rows carry their own org, and it drives that org's key share. A blank
+    // one is silently dropped from involvedOrgIds, leaving those admins unable
+    // to recover the message from their vault — so require it, as TO does.
+    const ccWithoutOrg = ccRecipients.filter(cc => cc.email.trim().length > 0 && !cc.org);
+    if (ccWithoutOrg.length > 0) {
+      toast.error(`Pick an organization for ${ccWithoutOrg.map(cc => cc.email).join(", ")}`);
       return;
     }
 
@@ -214,8 +227,8 @@ export default function ComposeModal({ isOpen, onClose, user, replyTo, forwardSu
     const ccMismatch = ccRecipients.some(cc => cc.dbOrgName && cc.org && cc.org.name !== cc.dbOrgName);
 
     if (toMismatch || ccMismatch) {
-      toast.error("Cryptographic Mismatch Detected", {
-        description: "The assigned organization does not match the recipient's secure record. Routing is blocked to prevent data leakage.",
+      const wrong = toMismatch ? toRecipient : ccRecipients.find(cc => cc.dbOrgName && cc.org && cc.org.name !== cc.dbOrgName)!;
+      toast.error(`${wrong.email} is at ${wrong.dbOrgName}, not ${wrong.org?.name}`, {
         duration: 6000,
       });
       return;
@@ -257,7 +270,7 @@ export default function ComposeModal({ isOpen, onClose, user, replyTo, forwardSu
           encryptedContent = await encryptString(data.content, aesKey);
         }
 
-        const attachmentMetadata: any[] = [];
+        const attachmentMetadata: AttachmentMetadata[] = [];
         
         // 4. Encrypt files
         if (files.length > 0) {
@@ -266,8 +279,11 @@ export default function ComposeModal({ isOpen, onClose, user, replyTo, forwardSu
             files.map(async (file) => {
               const { encryptedBlob } = await encryptFile(file, aesKey);
               return {
-                file: new File([encryptedBlob], file.name, { type: file.type }),
-                originalName: file.name,
+                // Opaque name — the storage provider must never see the real one
+                file: new File([encryptedBlob], opaqueUploadName(file.name), { type: file.type }),
+                // File name is encrypted with the same AES key as the message,
+                // so it only becomes readable once the recipient decrypts.
+                encryptedName: await encryptString(file.name, aesKey),
                 size: file.size,
                 type: file.type
               };
@@ -276,12 +292,12 @@ export default function ComposeModal({ isOpen, onClose, user, replyTo, forwardSu
 
           setProgress(60);
           const uploadResults = await startUpload(encryptedFiles.map(f => f.file));
-          if (!uploadResults) throw new Error("Upload failed.");
+          if (!uploadResults) throw new Error("Couldn't upload the attachments.");
 
           encryptedFiles.forEach((f, i) => {
             attachmentMetadata.push({
               fileUrl: uploadResults[i].url,
-              fileName: f.originalName,
+              fileName: f.encryptedName,
               fileSize: f.size,
               contentType: f.type,
               documentKeyShares: [] 
@@ -332,14 +348,14 @@ export default function ComposeModal({ isOpen, onClose, user, replyTo, forwardSu
         });
 
         setProgress(100);
-        return "SecureMail sent successfully!";
-      } catch (err: any) {
-        throw new Error(err.message || "Failed to send message.");
+        return "Sent";
+      } catch (err: unknown) {
+        throw new Error(getErrorMessage(err, "Couldn't send."));
       }
     };
 
     toast.promise(sendPromise(), {
-      loading: "Encrypting and sending message...",
+      loading: "Sending...",
       success: (msg) => {
         setIsSending(false);
         setFiles([]);
@@ -375,10 +391,15 @@ export default function ComposeModal({ isOpen, onClose, user, replyTo, forwardSu
           />
           
           <motion.div
+            ref={dialogRef}
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="compose-dialog-title"
+            tabIndex={-1}
             initial={{ opacity: 0, scale: 0.95, y: 20 }}
             animate={{ opacity: 1, scale: 1, y: 0 }}
             exit={{ opacity: 0, scale: 0.95, y: 20 }}
-            className="relative w-full max-w-3xl overflow-hidden rounded-2xl border border-gray-200 bg-white shadow-xl"
+            className="relative w-full max-w-3xl overflow-hidden rounded-xl border border-gray-200 bg-white shadow-xl outline-none"
           >
             {/* Header */}
             <div className="flex items-center justify-between border-b border-gray-100 bg-white px-6 py-4">
@@ -386,12 +407,13 @@ export default function ComposeModal({ isOpen, onClose, user, replyTo, forwardSu
                 <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-blue-50 text-blue-600">
                   <Mail className="h-4 w-4" />
                 </div>
-                <h2 className="text-lg font-bold text-gray-900">
-                  {replyTo ? "Reply" : forwardSubject ? "Forward" : "New Secure Message"}
+                <h2 id="compose-dialog-title" className="text-lg font-bold text-gray-900">
+                  {replyTo ? "Reply" : forwardSubject ? "Forward" : "New message"}
                 </h2>
               </div>
               <button
                 onClick={onClose}
+                aria-label="Close compose window"
                 className="rounded-lg p-1.5 text-gray-400 hover:bg-gray-100 hover:text-gray-700 transition-colors"
               >
                 <X className="h-5 w-5" />
@@ -404,7 +426,7 @@ export default function ComposeModal({ isOpen, onClose, user, replyTo, forwardSu
                 {/* To Recipient */}
                 <div className="space-y-2">
                   <div className="relative flex items-center gap-4 border-b border-gray-100 pb-2">
-                    <span className="text-sm font-bold text-gray-400 w-12 uppercase tracking-widest">To</span>
+                    <span className="text-sm font-bold text-gray-400 w-12">To</span>
                     <div className="relative flex-1">
                       <User className="absolute left-0 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400" />
                       <input
@@ -422,15 +444,20 @@ export default function ComposeModal({ isOpen, onClose, user, replyTo, forwardSu
                       <input
                         value={activeSearchTarget === "to" ? orgSearch : (toRecipient.org?.name || "")}
                         onChange={(e) => handleOrgSearch(e.target.value, "to")}
-                        placeholder="Assign Organization..."
-                        className="bg-transparent text-[11px] font-black text-blue-600 focus:outline-none placeholder:text-gray-400 w-full uppercase tracking-widest"
+                        placeholder="Organization"
+                        className="bg-transparent text-xs font-semibold text-blue-600 focus:outline-none placeholder:text-gray-400 w-full"
                       />
                     </div>
                     {toRecipient.dbOrgName && toRecipient.org && toRecipient.org.name !== toRecipient.dbOrgName && (
-                      <div className="flex items-center gap-1.5 px-2 py-1 rounded-md bg-red-50 text-red-500 border border-red-200 text-[9px] font-black uppercase animate-pulse">
+                      <div className="flex items-center gap-1.5 px-2 py-1 rounded-lg bg-red-50 text-red-500 border border-red-200 text-xs font-semibold animate-pulse">
                         <XCircle className="h-3 w-3" />
                         Target Mismatch
                       </div>
+                    )}
+                    {activeSearchTarget === "to" && isSearchingOrgs && (
+                      <span className="text-xs font-bold text-gray-400 shrink-0">
+                        Searching...
+                      </span>
                     )}
                     {/* Search Dropdown for To */}
                     <AnimatePresence>
@@ -456,8 +483,8 @@ export default function ComposeModal({ isOpen, onClose, user, replyTo, forwardSu
                 {/* CC Recipients */}
                 <div className="space-y-4">
                   <div className="flex items-center justify-between">
-                    <span className="text-sm font-bold text-gray-400 w-12 uppercase tracking-widest">CC</span>
-                    <button type="button" onClick={addCc} className="flex items-center gap-1 text-[10px] font-black text-blue-600 uppercase tracking-widest hover:text-blue-500 transition-colors">
+                    <span className="text-sm font-bold text-gray-400 w-12">CC</span>
+                    <button type="button" onClick={addCc} className="flex items-center gap-1 text-xs font-semibold text-blue-600 hover:text-blue-500 transition-colors">
                       <Plus className="h-3 w-3" />
                       Add CC
                     </button>
@@ -472,7 +499,7 @@ export default function ComposeModal({ isOpen, onClose, user, replyTo, forwardSu
                           placeholder="cc@example.com"
                           className="flex-1 bg-transparent py-1 text-sm text-gray-900 focus:outline-none placeholder:text-gray-400 border-b border-gray-100"
                         />
-                        <button type="button" onClick={() => removeCc(idx)} className="text-gray-400 hover:text-red-400">
+                        <button type="button" onClick={() => removeCc(idx)} aria-label="Remove CC recipient" className="text-gray-400 hover:text-red-400">
                           <X className="h-4 w-4" />
                         </button>
                       </div>
@@ -483,12 +510,12 @@ export default function ComposeModal({ isOpen, onClose, user, replyTo, forwardSu
                           <input
                             value={activeSearchTarget === idx ? orgSearch : (cc.org?.name || "")}
                             onChange={(e) => handleOrgSearch(e.target.value, idx)}
-                            placeholder="Assign Organization..."
-                            className="bg-transparent text-[10px] font-black text-gray-500 focus:outline-none placeholder:text-gray-400 w-full uppercase tracking-widest"
+                            placeholder="Organization"
+                            className="bg-transparent text-xs font-semibold text-gray-500 focus:outline-none placeholder:text-gray-400 w-full"
                           />
                         </div>
                         {cc.dbOrgName && cc.org && cc.org.name !== cc.dbOrgName && (
-                          <div className="flex items-center gap-1 px-2 py-0.5 rounded-md bg-red-50 text-red-500 border border-red-200 text-[8px] font-black uppercase">
+                          <div className="flex items-center gap-1 px-2 py-0.5 rounded-lg bg-red-50 text-red-500 border border-red-200 text-[8px] font-semibold">
                             Mismatch
                           </div>
                         )}
@@ -517,53 +544,40 @@ export default function ComposeModal({ isOpen, onClose, user, replyTo, forwardSu
 
                 <div className="space-y-4 pt-2">
                   <div className="flex items-center gap-4 border-b border-gray-100 pb-2">
-                    <span className="text-sm font-bold text-gray-400 w-12 uppercase tracking-widest">About</span>
+                    <span className="text-sm font-bold text-gray-400 w-12">About</span>
                     <input
                       {...register("subject")}
-                      placeholder="Subject line..."
+                      placeholder="Subject"
+                      aria-invalid={!!errors.subject}
                       className="flex-1 bg-transparent text-gray-900 focus:outline-none text-sm font-bold placeholder:text-gray-400"
                     />
                   </div>
+                  {errors.subject && (
+                    <p className="text-xs text-red-500 -mt-2">{errors.subject.message}</p>
+                  )}
 
                   <textarea
                     {...register("content")}
-                    placeholder="Write your encrypted message here..."
+                    placeholder="Message"
                     className="w-full min-h-[120px] bg-transparent text-gray-700 focus:outline-none text-base resize-none leading-relaxed placeholder:text-gray-400"
                   />
                 </div>
 
-                {/* Secure Routing Summary */}
+                {/* Who will be able to open this */}
                 {involvedOrgs.length > 0 && (
-                  <div className="rounded-xl bg-blue-50 border border-blue-100 p-5">
-                    <div className="flex items-start gap-4">
-                      <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-blue-100 text-blue-600 ring-1 ring-blue-200">
-                        <ShieldCheck className="h-5 w-5" />
-                      </div>
-                      <div className="space-y-1">
-                        <h4 className="text-xs font-black uppercase tracking-[0.2em] text-blue-700">Zero-Knowledge Routing Active</h4>
-                        <p className="text-[11px] leading-relaxed text-gray-600">
-                          Your message and attachments are cross-encrypted using <b>AES-256-GCM</b>.
-                          Only participants within the authorized organizations below can decrypt this payload.
-                        </p>
-                      </div>
-                    </div>
-
-                    <div className="mt-4 flex flex-wrap gap-2">
-                      {involvedOrgs.map((name, i) => (
-                        <div
-                          key={i}
-                          className="group flex items-center gap-2 rounded-lg border border-gray-200 bg-white px-3 py-2 transition-all hover:border-blue-200 hover:bg-blue-50"
-                        >
-                          <div className="h-1.5 w-1.5 rounded-full bg-blue-500" />
-                          <span className="text-[10px] font-black uppercase tracking-widest text-gray-700">{name}</span>
-                          <Building2 className="h-3 w-3 text-gray-400 group-hover:text-blue-500 transition-colors" />
-                        </div>
-                      ))}
-                    </div>
-
-                    <div className="mt-4 flex items-center gap-2 border-t border-blue-100 pt-3 text-[9px] font-bold uppercase tracking-widest text-blue-500">
-                      <Lock className="h-3 w-3" />
-                      End-to-End Encrypted Tunnel Established
+                  <div className="rounded-xl bg-blue-50 border border-blue-100 p-4">
+                    <div className="flex items-center gap-2.5">
+                      <Lock className="h-3.5 w-3.5 text-blue-600 shrink-0" />
+                      <p className="text-xs text-gray-700">
+                        Only {involvedOrgs.length === 1 ? "" : "people at "}
+                        {involvedOrgs.map((name, i) => (
+                          <span key={i}>
+                            {i > 0 && (i === involvedOrgs.length - 1 ? " and " : ", ")}
+                            <b className="text-gray-900">{name}</b>
+                          </span>
+                        ))}
+                        {" "}can open this.
+                      </p>
                     </div>
                   </div>
                 )}
@@ -578,6 +592,7 @@ export default function ComposeModal({ isOpen, onClose, user, replyTo, forwardSu
                         <button
                           type="button"
                           onClick={() => removeFile(i)}
+                          aria-label={`Remove attachment ${file.name}`}
                           className="ml-1 text-gray-400 hover:text-red-400 transition-colors"
                         >
                           <XCircle className="h-4 w-4" />
@@ -618,7 +633,7 @@ export default function ComposeModal({ isOpen, onClose, user, replyTo, forwardSu
                   </div>
 
                   {files.length > 0 && (
-                    <div className="text-[10px] font-black text-blue-600 uppercase tracking-widest bg-blue-50 px-3 py-1.5 rounded-full border border-blue-100">
+                    <div className="text-xs font-semibold text-blue-600 bg-blue-50 px-3 py-1.5 rounded-full border border-blue-100">
                       {files.length} Files Ready
                     </div>
                   )}
@@ -627,7 +642,7 @@ export default function ComposeModal({ isOpen, onClose, user, replyTo, forwardSu
                 <button
                   type="submit"
                   disabled={isSending}
-                  className="flex items-center gap-2 rounded-xl bg-blue-600 px-8 py-2.5 text-sm font-bold text-white hover:bg-blue-700 transition-all shadow-sm disabled:opacity-50"
+                  className="flex items-center gap-2 rounded-lg bg-blue-600 px-8 py-2.5 text-sm font-bold text-white hover:bg-blue-700 transition-all disabled:opacity-50"
                 >
                   {isSending ? (
                     <><Loader2 className="h-4 w-4 animate-spin" /> {progress}%</>

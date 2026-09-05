@@ -4,24 +4,9 @@ import { useEffect, useRef, useState } from "react";
 import { format, isToday, isYesterday, isThisWeek } from "date-fns";
 import { Message } from "./DashboardUI";
 import { cn } from "@/lib/utils";
-import { Paperclip, Inbox, Check } from "lucide-react";
-import { motion } from "framer-motion";
+import { Paperclip, Check, Lock, Archive, Trash2 } from "lucide-react";
 import { loadMoreMessages } from "@/app/actions/documents";
-
-const AVATAR_PALETTE = [
-  "bg-blue-500",
-  "bg-violet-500",
-  "bg-emerald-500",
-  "bg-amber-500",
-  "bg-rose-500",
-  "bg-cyan-500",
-  "bg-pink-500",
-  "bg-indigo-500",
-];
-
-function getAvatarColor(str: string): string {
-  return AVATAR_PALETTE[str.toLowerCase().charCodeAt(0) % AVATAR_PALETTE.length];
-}
+import { avatarColor, avatarInitial } from "@/lib/avatar";
 
 function formatTime(date: Date): string {
   if (isToday(date)) return format(date, "HH:mm");
@@ -36,10 +21,14 @@ interface MessageListProps {
   onSelect: (id: string) => void;
   view: "inbox" | "sent" | "archived" | "vault";
   unreadIds?: Set<string>;
+  /** Subjects decrypted during this session, keyed by message id. */
+  decryptedSubjects?: Record<string, string>;
   onLoadMore?: (newMessages: Message[]) => void;
   hasMore?: boolean;
   selectedIds?: Set<string>;
   onToggleSelect?: (id: string) => void;
+  onArchive?: (id: string) => void;
+  onDelete?: (id: string) => void;
 }
 
 export default function MessageList({
@@ -48,10 +37,13 @@ export default function MessageList({
   onSelect,
   view,
   unreadIds = new Set(),
+  decryptedSubjects = {},
   onLoadMore,
   hasMore = false,
   selectedIds = new Set(),
   onToggleSelect,
+  onArchive,
+  onDelete,
 }: MessageListProps) {
   const [isLoadingMore, setIsLoadingMore] = useState(false);
   const loadMoreRef = useRef<HTMLDivElement>(null);
@@ -61,7 +53,7 @@ export default function MessageList({
     setIsLoadingMore(true);
     try {
       const cursor = messages[messages.length - 1].id;
-      const more = await loadMoreMessages({ view: view as any, cursor });
+      const more = await loadMoreMessages({ view, cursor });
       onLoadMore?.(more as Message[]);
     } finally {
       setIsLoadingMore(false);
@@ -79,158 +71,138 @@ export default function MessageList({
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [messages.length, hasMore, isLoadingMore]);
 
-  if (messages.length === 0) {
-    return (
-      <div className="flex flex-col items-center justify-center p-12 text-center">
-        <div className="h-14 w-14 rounded-2xl bg-gray-100 flex items-center justify-center mb-4">
-          <Inbox className="h-6 w-6 text-gray-300" />
-        </div>
-        <p className="text-gray-500 font-medium text-sm">No messages</p>
-        <p className="text-gray-400 text-xs mt-1">Your secure inbox is empty.</p>
-      </div>
-    );
-  }
-
   return (
-    <div className="flex flex-col divide-y divide-gray-100">
-      {messages.map((message, index) => {
+    <div className="flex flex-col">
+      {messages.map((message) => {
         const isSelected = selectedId === message.id;
         const isUnread = unreadIds.has(message.id);
-
-        const displayName =
-          view === "inbox" || view === "vault" || view === "archived"
-            ? message.sender.name || message.sender.email
-            : message.recipients
-                ?.filter((r) => r.role === "TO")
-                .map((r) => r.user.name || r.user.email)
-                .join(", ") || "Recipient";
-
-        const initial = displayName.charAt(0).toUpperCase();
-        const avatarColor = getAvatarColor(displayName);
-        const fileCount = message.documents.length;
-        const hasCc = message.recipients?.some((r) => r.role === "CC");
-
         const isBulkSelected = selectedIds.has(message.id);
 
+        const displayName =
+          view === "sent"
+            ? message.recipients
+                ?.filter((r) => r.role === "TO")
+                .map((r) => r.user.name || r.user.email)
+                .join(", ") || "Recipient"
+            : message.sender.name || message.sender.email;
+
+        // Only ever a subject this session decrypted — never read from the DB.
+        const subject = decryptedSubjects[message.id];
+        const fileCount = message.documents.length;
+        const ccCount = message.recipients?.filter((r) => r.role === "CC").length ?? 0;
+
         return (
-          <motion.div
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            transition={{ delay: index * 0.015, duration: 0.18 }}
+          <div
             key={message.id}
             className={cn(
-              "flex items-start gap-3.5 px-4 py-4 transition-colors w-full relative group",
-              isSelected ? "bg-blue-50" : isBulkSelected ? "bg-blue-50/60" : "hover:bg-gray-50/80"
+              "group relative flex items-center gap-3 px-4 sm:px-5 py-3 border-b border-gray-100 transition-colors cursor-pointer",
+              isSelected ? "bg-blue-50"
+                : isBulkSelected ? "bg-blue-50/50"
+                : isUnread ? "bg-white hover:bg-gray-50"
+                : "bg-gray-50/40 hover:bg-gray-50"
             )}
+            onClick={() => onSelect(message.id)}
           >
-            {isSelected && (
-              <motion.div
-                layoutId="list-indicator"
-                className="absolute left-0 top-0 h-full w-[3px] bg-blue-600 rounded-r-full"
-              />
-            )}
-
-            {/* Checkbox (shown on hover or when any selection exists) */}
+            {/* Selection checkbox */}
             {onToggleSelect && (
-              <div
-                className={cn(
-                  "absolute left-2 top-1/2 -translate-y-1/2 z-10 transition-opacity",
-                  isBulkSelected || selectedIds.size > 0 ? "opacity-100" : "opacity-0 group-hover:opacity-100"
-                )}
+              <button
                 onClick={(e) => { e.stopPropagation(); onToggleSelect(message.id); }}
+                aria-label={isBulkSelected ? "Deselect message" : "Select message"}
+                className={cn(
+                  "h-4 w-4 shrink-0 rounded border-2 flex items-center justify-center transition-all",
+                  isBulkSelected
+                    ? "bg-blue-600 border-blue-600"
+                    : "border-gray-300 hover:border-blue-400"
+                )}
               >
-                <div className={cn(
-                  "h-4 w-4 rounded border-2 flex items-center justify-center cursor-pointer transition-all",
-                  isBulkSelected ? "bg-blue-600 border-blue-600" : "border-gray-300 bg-white hover:border-blue-400"
-                )}>
-                  {isBulkSelected && <Check className="h-3 w-3 text-white" strokeWidth={3} />}
-                </div>
-              </div>
+                {isBulkSelected && <Check className="h-3 w-3 text-white" strokeWidth={3} />}
+              </button>
             )}
 
-            {/* Clickable area */}
-            <button
-              onClick={() => onSelect(message.id)}
-              className="flex items-start gap-3.5 flex-1 text-left min-w-0"
-            >
-
-            {/* Avatar with unread indicator */}
-            <div className="relative shrink-0 mt-0.5">
-              <div
-                className={cn(
-                  "h-9 w-9 rounded-full flex items-center justify-center text-xs font-bold text-white",
-                  avatarColor
-                )}
-              >
-                {initial}
-              </div>
-              {isUnread && (
-                <span className="absolute -top-0.5 -right-0.5 h-3 w-3 rounded-full bg-blue-600 border-2 border-white" />
+            <div
+              className={cn(
+                "h-8 w-8 shrink-0 rounded-full flex items-center justify-center text-sm font-medium",
+                avatarColor(displayName)
               )}
+            >
+              {avatarInitial(displayName)}
             </div>
 
-            {/* Body */}
-            <div className="flex-1 min-w-0 overflow-hidden">
-              <div className="flex items-center justify-between gap-2 mb-0.5">
-                <span
-                  className={cn(
-                    "text-sm font-semibold truncate",
-                    isSelected ? "text-blue-700" : "text-gray-900"
-                  )}
-                >
-                  {displayName}
-                </span>
-                <span className="text-[10px] text-gray-400 shrink-0 tabular-nums">
-                  {formatTime(new Date(message.createdAt))}
-                </span>
-              </div>
-
-              <p
-                className={cn(
-                  "text-xs truncate mb-1.5",
-                  isSelected ? "text-blue-600 font-medium" : isUnread ? "text-gray-900 font-bold" : "text-gray-700 font-medium"
-                )}
-              >
-                Encrypted Message
+            <div className="flex-1 min-w-0">
+              <p className={cn("text-sm truncate", isUnread ? "font-semibold text-gray-900" : "text-gray-700")}>
+                {displayName}
               </p>
 
-              <div className="flex items-center justify-between gap-2">
-                <span className="text-[11px] text-gray-400 truncate italic">
-                  Encrypted payload
-                </span>
-
-                <div className="flex items-center gap-1 shrink-0">
-                  {hasCc && (
-                    <span className="text-[9px] font-bold bg-gray-100 text-gray-400 px-1.5 py-0.5 rounded-md uppercase tracking-wider border border-gray-200">
-                      CC
-                    </span>
-                  )}
-                  {fileCount > 0 && (
-                    <span
-                      className={cn(
-                        "flex items-center gap-1 text-[10px] font-bold px-1.5 py-0.5 rounded-md border",
-                        isSelected
-                          ? "bg-blue-100 text-blue-600 border-blue-200"
-                          : "bg-gray-100 text-gray-500 border-gray-200"
-                      )}
-                    >
-                      <Paperclip className="h-2.5 w-2.5" />
-                      {fileCount}
-                    </span>
-                  )}
-                </div>
+              {/* No subject to show until it's decrypted, so this line carries
+                  what we actually know rather than the word "Encrypted" twice. */}
+              <div className="flex items-center gap-2 text-sm text-gray-500 min-w-0">
+                {subject ? (
+                  <span className="truncate">{subject}</span>
+                ) : (
+                  <span className="flex items-center gap-1 text-gray-400 shrink-0">
+                    <Lock className="h-3 w-3" />
+                    Locked
+                  </span>
+                )}
+                {fileCount > 0 && (
+                  <span className="flex items-center gap-1 shrink-0 text-gray-400">
+                    <Paperclip className="h-3 w-3" />
+                    {fileCount}
+                  </span>
+                )}
+                {ccCount > 0 && (
+                  <span className="shrink-0 text-gray-400">Cc {ccCount}</span>
+                )}
               </div>
             </div>
-            </button>
-          </motion.div>
+
+            {/* Date, swapped for actions on hover. Always shown on touch, where
+                there is no hover to reveal them. */}
+            <div className="shrink-0 relative flex items-center">
+              <span
+                className={cn(
+                  "text-sm tabular-nums transition-opacity",
+                  isUnread ? "text-gray-900 font-medium" : "text-gray-400",
+                  (onArchive || onDelete) && "sm:group-hover:opacity-0"
+                )}
+              >
+                {formatTime(new Date(message.createdAt))}
+              </span>
+
+              {(onArchive || onDelete) && (
+                <div className="absolute right-0 hidden sm:flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
+                  {onArchive && (
+                    <button
+                      onClick={(e) => { e.stopPropagation(); onArchive(message.id); }}
+                      title="Archive"
+                      aria-label="Archive message"
+                      className="flex h-7 w-7 items-center justify-center rounded-lg text-gray-500 hover:bg-white hover:text-gray-900 transition-colors"
+                    >
+                      <Archive className="h-4 w-4" />
+                    </button>
+                  )}
+                  {onDelete && (
+                    <button
+                      onClick={(e) => { e.stopPropagation(); onDelete(message.id); }}
+                      title="Delete"
+                      aria-label="Delete message"
+                      className="flex h-7 w-7 items-center justify-center rounded-lg text-gray-500 hover:bg-white hover:text-red-600 transition-colors"
+                    >
+                      <Trash2 className="h-4 w-4" />
+                    </button>
+                  )}
+                </div>
+              )}
+            </div>
+          </div>
         );
       })}
 
       {hasMore && (
-        <div ref={loadMoreRef} className="p-6 flex justify-center">
-          {isLoadingMore
-            ? <div className="h-1 w-8 rounded-full bg-blue-300 animate-pulse" />
-            : <div className="h-1 w-8 rounded-full bg-gray-200" />}
+        <div ref={loadMoreRef} className="py-4 text-center">
+          <span className="text-sm text-gray-400">
+            {isLoadingMore ? "Loading..." : " "}
+          </span>
         </div>
       )}
     </div>
